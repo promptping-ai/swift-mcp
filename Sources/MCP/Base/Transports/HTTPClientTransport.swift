@@ -181,7 +181,7 @@ public actor HTTPClientTransport: Transport {
             )
     }
 
-    // Setup the initial session ID signal stream
+    // Set up the initial session ID signal stream
     private func setUpInitialSessionIDSignal() {
         let (stream, continuation) = AsyncStream<Void>.makeStream()
         self.sessionIDSignalStream = stream
