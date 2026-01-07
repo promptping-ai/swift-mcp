@@ -272,7 +272,7 @@ public enum ListResources: Method {
     public struct Parameters: NotRequired, Hashable, Codable, Sendable {
         public let cursor: String?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init() {
             self.cursor = nil
@@ -337,7 +337,7 @@ public enum ReadResource: Method {
     public struct Parameters: Hashable, Codable, Sendable {
         public let uri: String
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(uri: String, _meta: RequestMeta? = nil) {
             self.uri = uri
@@ -392,7 +392,7 @@ public enum ListResourceTemplates: Method {
     public struct Parameters: NotRequired, Hashable, Codable, Sendable {
         public let cursor: String?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init() {
             self.cursor = nil
@@ -467,7 +467,7 @@ public enum ResourceSubscribe: Method {
     public struct Parameters: Hashable, Codable, Sendable {
         public let uri: String
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(uri: String, _meta: RequestMeta? = nil) {
             self.uri = uri
@@ -486,7 +486,7 @@ public enum ResourceUnsubscribe: Method {
     public struct Parameters: Hashable, Codable, Sendable {
         public let uri: String
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(uri: String, _meta: RequestMeta? = nil) {
             self.uri = uri

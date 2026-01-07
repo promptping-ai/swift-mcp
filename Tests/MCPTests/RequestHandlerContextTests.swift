@@ -1414,11 +1414,11 @@ struct AdditionalRequestHandlerContextTests {
         }
 
         await server.withRequestHandler(CallTool.self) { [server] _, _ in
-            var params = SamplingParameters(
+            let params = SamplingParameters(
                 messages: [.user("Hello")],
-                maxTokens: 100
+                maxTokens: 100,
+                _meta: RequestMeta(progressToken: .string("sampling-token-123"))
             )
-            params._meta = RequestMeta(progressToken: .string("sampling-token-123"))
             let result = try await server.createMessage(params)
             return CallTool.Result(content: [.text("LLM said: \(result.model)")])
         }

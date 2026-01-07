@@ -32,8 +32,11 @@ import Testing
 
         /// Start the connection
         func start(queue: DispatchQueue) {
-            // Simulate successful connection by default
+            // Simulate successful connection by default, but only if not already failed
             Task { @MainActor in
+                // Don't override failed/cancelled states
+                if case .failed = self.mockState { return }
+                if case .cancelled = self.mockState { return }
                 self.updateState(.ready)
             }
         }

@@ -8,7 +8,7 @@ extension Client {
     public func onNotification<N: Notification>(
         _ type: N.Type,
         handler: @escaping @Sendable (Message<N>) async throws -> Void
-    ) async -> Self {
+    ) -> Self {
         notificationHandlers[N.name, default: []].append(TypedNotificationHandler(handler))
         return self
     }

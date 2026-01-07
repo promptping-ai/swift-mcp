@@ -336,8 +336,8 @@ public struct SamplingParameters: Hashable, Codable, Sendable {
     public let maxTokens: Int
     public let stopSequences: [String]?
     public let metadata: [String: Value]?
-    public var _meta: RequestMeta?
-    public var task: TaskMetadata?
+    public let _meta: RequestMeta?
+    public let task: TaskMetadata?
 
     public init(
         messages: [Sampling.Message],

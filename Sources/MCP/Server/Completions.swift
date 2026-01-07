@@ -246,7 +246,7 @@ public enum Complete: Method {
         /// Additional, optional context for completions.
         public let context: CompletionContext?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(
             ref: CompletionReference,

@@ -282,9 +282,9 @@ public enum GetTask: Method {
 
     public struct Parameters: Hashable, Codable, Sendable {
         /// The ID of the task to retrieve
-        public var taskId: String
+        public let taskId: String
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(taskId: String, _meta: RequestMeta? = nil) {
             self.taskId = taskId
@@ -403,9 +403,9 @@ public enum GetTaskPayload: Method {
 
     public struct Parameters: Hashable, Codable, Sendable {
         /// The ID of the task to get results for
-        public var taskId: String
+        public let taskId: String
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(taskId: String, _meta: RequestMeta? = nil) {
             self.taskId = taskId
@@ -486,9 +486,9 @@ public enum ListTasks: Method {
 
     public struct Parameters: NotRequired, Hashable, Codable, Sendable {
         /// Pagination cursor
-        public var cursor: String?
+        public let cursor: String?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init() {
             self.cursor = nil
@@ -555,9 +555,9 @@ public enum CancelTask: Method {
 
     public struct Parameters: Hashable, Codable, Sendable {
         /// The ID of the task to cancel
-        public var taskId: String
+        public let taskId: String
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(taskId: String, _meta: RequestMeta? = nil) {
             self.taskId = taskId

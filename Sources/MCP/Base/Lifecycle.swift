@@ -13,7 +13,7 @@ public enum Initialize: Method {
         public let capabilities: Client.Capabilities
         public let clientInfo: Client.Info
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(
             protocolVersion: String = Version.latest,

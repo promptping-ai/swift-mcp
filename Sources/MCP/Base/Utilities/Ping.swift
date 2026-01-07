@@ -5,7 +5,7 @@ public enum Ping: Method {
 
     public struct Parameters: NotRequired, Hashable, Codable, Sendable {
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init() {
             self._meta = nil

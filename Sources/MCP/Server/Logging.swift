@@ -52,7 +52,7 @@ public enum SetLoggingLevel: Method {
         /// The minimum log level to receive.
         public let level: LoggingLevel
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(level: LoggingLevel, _meta: RequestMeta? = nil) {
             self.level = level

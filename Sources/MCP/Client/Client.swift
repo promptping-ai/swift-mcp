@@ -681,7 +681,7 @@ public actor Client {
         }
 
         // Register default handler for CancelledNotification (protocol-level cancellation)
-        _ = await onNotification(CancelledNotification.self) { [weak self] message in
+        onNotification(CancelledNotification.self) { [weak self] message in
             guard let self else { return }
             guard let requestId = message.params.requestId else {
                 // Per protocol 2025-11-25+, requestId is optional.

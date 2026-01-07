@@ -283,7 +283,7 @@ public enum ListPrompts: Method {
     public struct Parameters: NotRequired, Hashable, Codable, Sendable {
         public let cursor: String?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init() {
             self.cursor = nil
@@ -352,7 +352,7 @@ public enum GetPrompt: Method {
         /// Per the MCP spec, argument values must be strings.
         public let arguments: [String: String]?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(name: String, arguments: [String: String]? = nil, _meta: RequestMeta? = nil) {
             self.name = name

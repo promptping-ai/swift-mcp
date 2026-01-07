@@ -479,10 +479,10 @@ public struct ElicitRequestFormParams: Hashable, Codable, Sendable {
     /// A restricted subset of JSON Schema defining the form fields.
     public var requestedSchema: ElicitationSchema
     /// Request metadata including progress token.
-    public var _meta: RequestMeta?
+    public let _meta: RequestMeta?
     /// Task augmentation metadata. If present, the receiver should run the elicitation
     /// as a background task and return `CreateTaskResult` instead of `ElicitResult`.
-    public var task: TaskMetadata?
+    public let task: TaskMetadata?
 
     public init(
         mode: String? = nil,
@@ -652,10 +652,10 @@ public struct ElicitRequestURLParams: Hashable, Codable, Sendable {
     /// The URL that the user should navigate to.
     public var url: String
     /// Request metadata including progress token.
-    public var _meta: RequestMeta?
+    public let _meta: RequestMeta?
     /// Task augmentation metadata. If present, the receiver should run the elicitation
     /// as a background task and return `CreateTaskResult` instead of `ElicitResult`.
-    public var task: TaskMetadata?
+    public let task: TaskMetadata?
 
     public init(
         message: String,

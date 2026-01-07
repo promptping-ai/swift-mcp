@@ -314,7 +314,7 @@ public enum ListTools: Method {
     public struct Parameters: NotRequired, Hashable, Codable, Sendable {
         public let cursor: String?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init() {
             self.cursor = nil
@@ -385,9 +385,9 @@ public enum CallTool: Method {
         /// Task metadata for task-augmented requests.
         /// When present, the request becomes task-augmented and returns a `CreateTaskResult`
         /// instead of a normal result.
-        public var task: TaskMetadata?
+        public let task: TaskMetadata?
         /// Request metadata including progress token.
-        public var _meta: RequestMeta?
+        public let _meta: RequestMeta?
 
         public init(
             name: String,

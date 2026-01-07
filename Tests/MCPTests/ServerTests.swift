@@ -162,7 +162,8 @@ struct ServerTests {
         )
 
         // Wait for server to initialize and respond
-        try await Task.sleep(for: .milliseconds(100))
+        let initialized = await transport.waitForSentMessageCount(1)
+        #expect(initialized, "Server should have sent initialize response")
 
         // Clear sent messages
         await transport.clearMessages()
@@ -180,7 +181,8 @@ struct ServerTests {
         try await transport.queue(batch: batch)
 
         // Wait for batch processing
-        try await Task.sleep(for: .milliseconds(100))
+        let batchProcessed = await transport.waitForSentMessageCount(1)
+        #expect(batchProcessed, "Server should have sent batch response")
 
         // Verify response
         let sentMessages = await transport.sentMessages
