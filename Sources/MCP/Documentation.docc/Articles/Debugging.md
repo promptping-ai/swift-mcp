@@ -74,186 +74,22 @@ let serverTransport = HTTPServerTransport(
 
 ## Error Handling
 
-### MCPError
-
-The SDK defines ``MCPError`` for protocol-level errors:
-
-```swift
-do {
-    try await client.callTool(name: "unknown", arguments: [:])
-} catch let error as MCPError {
-    switch error {
-    case .parseError(let message):
-        print("Invalid JSON: \(message ?? "")")
-
-    case .invalidRequest(let message):
-        print("Invalid request: \(message ?? "")")
-
-    case .methodNotFound(let method):
-        print("Method not found: \(method ?? "")")
-
-    case .invalidParams(let message):
-        print("Invalid parameters: \(message ?? "")")
-
-    case .internalError(let message):
-        print("Internal error: \(message ?? "")")
-
-    case .connectionClosed(let reason):
-        print("Connection closed: \(reason ?? "")")
-
-    case .requestTimeout(let message):
-        print("Request timed out: \(message ?? "")")
-
-    case .requestCancelled(let reason):
-        print("Request cancelled: \(reason ?? "")")
-
-    case .resourceNotFound(let uri):
-        print("Resource not found: \(uri ?? "")")
-
-    case .transportError(let message):
-        print("Transport error: \(message ?? "")")
-
-    case .custom(let code, let message, let data):
-        print("Custom error \(code): \(message ?? "")")
-    }
-}
-```
-
-### Error Codes
-
-Standard JSON-RPC and MCP error codes:
-
-```swift
-// JSON-RPC 2.0 standard errors
-ErrorCode.parseError        // -32700: Invalid JSON
-ErrorCode.invalidRequest    // -32600: Invalid request object
-ErrorCode.methodNotFound    // -32601: Method not available
-ErrorCode.invalidParams     // -32602: Invalid parameters
-ErrorCode.internalError     // -32603: Internal error
-
-// MCP specification errors
-ErrorCode.resourceNotFound        // -32002: Resource doesn't exist
-ErrorCode.urlElicitationRequired  // -32042: URL elicitation needed
-
-// SDK-specific errors
-ErrorCode.connectionClosed   // -32000: Connection closed
-ErrorCode.requestTimeout     // -32001: Request timed out
-ErrorCode.transportError     // -32003: Transport layer error
-ErrorCode.requestCancelled   // -32004: Request was cancelled
-```
-
-### Throwing Errors from Handlers
-
 In request handlers, throw ``MCPError`` for protocol-compliant error responses:
 
 ```swift
-await server.withRequestHandler(ReadResource.self) { params in
+await server.withRequestHandler(ReadResource.self) { params, _ in
     guard let content = loadResource(params.uri) else {
-        throw MCPError.resourceNotFound(params.uri)
+        throw MCPError.resourceNotFound(uri: params.uri)
     }
     return .init(contents: [content])
 }
 
-await server.withRequestHandler(CallTool.self) { params in
+await server.withRequestHandler(CallTool.self) { params, _ in
     guard isValidTool(params.name) else {
         throw MCPError.invalidParams("Unknown tool: \(params.name)")
     }
     // ...
 }
-```
-
-## Common Issues
-
-### Connection Problems
-
-**Symptom:** Client can't connect to server
-
-**Debugging steps:**
-1. Enable debug logging on both client and server
-2. Verify transport configuration (endpoint URL, port)
-3. Check network connectivity
-4. For HTTP: verify the endpoint path matches
-
-```swift
-// Verbose logging for connection issues
-var handler = StreamLogHandler.standardOutput(label: "mcp")
-handler.logLevel = .trace
-```
-
-### Initialization Failures
-
-**Symptom:** Connection succeeds but initialization fails
-
-**Debugging steps:**
-1. Check protocol version compatibility
-2. Verify capabilities are properly declared
-3. Look for errors in the initialize hook
-
-```swift
-try await server.start(transport: transport) { clientInfo, capabilities in
-    print("Client: \(clientInfo.name) v\(clientInfo.version)")
-    print("Capabilities: \(capabilities)")
-}
-```
-
-### Handler Not Called
-
-**Symptom:** Requests succeed but handler code doesn't run
-
-**Debugging steps:**
-1. Verify handler is registered before `server.start()`
-2. Check the method name matches exactly
-3. Confirm capabilities are declared for the feature
-
-```swift
-// Handlers must be registered before starting
-await server.withRequestHandler(ListTools.self) { _ in ... }
-await server.withRequestHandler(CallTool.self) { params in ... }
-
-// Then start
-try await server.start(transport: transport)
-```
-
-### Request Timeouts
-
-**Symptom:** Requests hang or timeout
-
-**Debugging steps:**
-1. Check if handler is blocking or slow
-2. Verify network latency for HTTP transport
-3. Consider increasing timeout for slow operations
-
-```swift
-// Increase timeout for slow operations
-let result = try await client.send(
-    CallTool.request(.init(name: "slow-tool", arguments: [:])),
-    timeout: .seconds(120)
-)
-```
-
-### Session Issues (HTTP)
-
-**Symptom:** Session ID errors or 404 responses
-
-**Debugging steps:**
-1. Verify session ID is included in headers
-2. Check session hasn't expired or been cleaned up
-3. Ensure session manager is properly configured
-
-```swift
-// Log session lifecycle
-let transport = HTTPServerTransport(
-    options: .init(
-        sessionIdGenerator: { UUID().uuidString },
-        onSessionInitialized: { id in
-            print("Session started: \(id)")
-        },
-        onSessionClosed: { id in
-            print("Session ended: \(id)")
-        }
-    ),
-    logger: logger
-)
 ```
 
 ## Protocol Inspection
@@ -281,27 +117,6 @@ struct VerboseLogHandler: LogHandler {
             }
         }
     }
-}
-```
-
-### Inspecting Capabilities
-
-Check what capabilities were negotiated:
-
-```swift
-// Client side
-let result = try await client.connect(transport: transport)
-print("Server capabilities:")
-print("  Tools: \(result.capabilities.tools != nil)")
-print("  Resources: \(result.capabilities.resources != nil)")
-print("  Prompts: \(result.capabilities.prompts != nil)")
-print("  Sampling: \(result.capabilities.sampling != nil)")
-
-// Server side (in initialize hook)
-try await server.start(transport: transport) { clientInfo, capabilities in
-    print("Client capabilities:")
-    print("  Sampling: \(capabilities.sampling != nil)")
-    print("  Roots: \(capabilities.roots != nil)")
 }
 ```
 

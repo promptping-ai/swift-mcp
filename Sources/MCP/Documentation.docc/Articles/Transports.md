@@ -114,7 +114,7 @@ func handleMCPRequest(_ request: HTTPRequest) async throws -> HTTPResponse {
 }
 ```
 
-See <doc:Examples> for complete integration examples.
+See the [integration examples](https://github.com/DePasqualeOrg/mcp-swift-sdk/tree/main/Examples) for complete examples.
 
 ## SessionManager
 
@@ -132,7 +132,7 @@ if let transport = await sessionManager.transport(forSessionId: sessionId) {
 }
 
 // Clean up stale sessions
-await sessionManager.cleanupStaleSessions(olderThan: .seconds(3600))
+await sessionManager.cleanUpStaleSessions(olderThan: .seconds(3600))
 
 // Remove a session
 await sessionManager.remove(sessionId)
@@ -145,8 +145,8 @@ Direct communication within the same process. Useful for testing and embedded sc
 **Platforms:** All platforms
 
 ```swift
-// Create a linked pair of transports
-let (clientTransport, serverTransport) = InMemoryTransport.createLinkedPair()
+// Create a connected pair of transports
+let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
 
 // Use them for client and server
 try await server.start(transport: serverTransport)
@@ -162,11 +162,15 @@ Low-level transport using Apple's Network framework for TCP/UDP connections.
 ```swift
 import Network
 
-let transport = NetworkTransport(
-    host: "localhost",
-    port: 8080,
+// Create a TCP connection to a server
+let connection = NWConnection(
+    host: NWEndpoint.Host("localhost"),
+    port: NWEndpoint.Port(8080)!,
     using: .tcp
 )
+
+// Initialize the transport with the connection
+let transport = NetworkTransport(connection: connection)
 ```
 
 ## Custom Transport Implementation
@@ -178,14 +182,14 @@ public actor MyCustomTransport: Transport {
     public nonisolated let logger: Logger
 
     private var isConnected = false
-    private let messageStream: AsyncThrowingStream<Data, Error>
-    private let messageContinuation: AsyncThrowingStream<Data, Error>.Continuation
+    private let messageStream: AsyncThrowingStream<TransportMessage, Swift.Error>
+    private let messageContinuation: AsyncThrowingStream<TransportMessage, Swift.Error>.Continuation
 
     public init(logger: Logger? = nil) {
         self.logger = logger ?? Logger(label: "my.transport")
 
-        var continuation: AsyncThrowingStream<Data, Error>.Continuation!
-        self.messageStream = AsyncThrowingStream { continuation = $0 }
+        let (stream, continuation) = AsyncThrowingStream<TransportMessage, Swift.Error>.makeStream()
+        self.messageStream = stream
         self.messageContinuation = continuation
     }
 
@@ -204,40 +208,14 @@ public actor MyCustomTransport: Transport {
         // Send data to the remote endpoint
     }
 
-    public func receive() -> AsyncThrowingStream<Data, Error> {
+    public func receive() -> AsyncThrowingStream<TransportMessage, Swift.Error> {
         return messageStream
     }
+
+    // To yield incoming messages:
+    // messageContinuation.yield(TransportMessage(data: incomingData))
 }
 ```
-
-## OAuth Support
-
-The SDK includes foundational types for OAuth 2.0 authentication:
-
-### OAuthTokens
-
-```swift
-let tokens = OAuthTokens(
-    accessToken: "access_token_here",
-    tokenType: "Bearer",
-    expiresIn: 3600,
-    refreshToken: "refresh_token_here"
-)
-```
-
-### UnauthorizedContext
-
-Handle 401 responses:
-
-```swift
-let context = UnauthorizedContext(
-    resourceMetadataURL: URL(string: "https://api.example.com/.well-known/oauth"),
-    scope: "read write",
-    wwwAuthenticate: headerValue
-)
-```
-
-> Note: Full OAuth flow implementation (discovery, PKCE, token exchange) is planned for a future release.
 
 ## Platform Availability
 
@@ -251,6 +229,5 @@ let context = UnauthorizedContext(
 
 ## See Also
 
-- <doc:Examples>
 - <doc:ClientGuide>
 - <doc:ServerGuide>

@@ -30,23 +30,41 @@ if result.capabilities.tools != nil {
 
 ## Transport Options
 
-### Stdio Transport
+### stdio
 
-For local subprocess communication:
+For spawning and communicating with a local MCP server process:
 
 ```swift
-let transport = StdioTransport()
+import Foundation
+import MCP
+import System
+
+// Spawn the server process
+let process = Process()
+process.executableURL = URL(fileURLWithPath: "/path/to/my-mcp-server")
+
+let stdinPipe = Pipe()
+let stdoutPipe = Pipe()
+process.standardInput = stdinPipe
+process.standardOutput = stdoutPipe
+
+try process.run()
+
+// Create client with stdio transport using the process pipes
+let client = Client(name: "MyApp", version: "1.0.0")
+let transport = StdioTransport(
+    input: FileDescriptor(rawValue: stdoutPipe.fileHandleForReading.fileDescriptor),
+    output: FileDescriptor(rawValue: stdinPipe.fileHandleForWriting.fileDescriptor)
+)
+
 try await client.connect(transport: transport)
 ```
 
-### HTTP Transport
-
-For remote server communication:
+### HTTP
 
 ```swift
 let transport = HTTPClientTransport(
-    endpoint: URL(string: "http://localhost:8080/mcp")!,
-    streaming: true  // Enable Server-Sent Events
+    endpoint: URL(string: "http://localhost:8080/mcp")!
 )
 try await client.connect(transport: transport)
 ```
@@ -80,7 +98,7 @@ let result = try await client.callTool(
 )
 
 // Check for errors
-if result.isError == true {
+if result.isError {
     print("Tool call failed")
 }
 
@@ -95,7 +113,7 @@ for item in result.content {
         print("Audio: \(mimeType)")
     case .resource(let resource, _, _):
         print("Resource: \(resource.uri)")
-    case .link(let link, _, _):
+    case .resourceLink(let link):
         print("Link: \(link.uri)")
     }
 }
@@ -132,7 +150,7 @@ List available resource templates for dynamic URIs:
 
 ```swift
 let result = try await client.listResourceTemplates()
-for template in result.resourceTemplates {
+for template in result.templates {
     print("\(template.uriTemplate): \(template.name)")
 }
 // Use result.nextCursor for pagination
@@ -206,19 +224,19 @@ for value in result.completion.values {
 Sampling allows servers to request LLM completions through the client. Register a handler to process these requests:
 
 ```swift
-await client.withSamplingHandler { parameters in
+client.withSamplingHandler { params, context in
     // The server is requesting an LLM completion
-    print("Server requests: \(parameters.messages)")
+    print("Server requests: \(params.messages)")
 
     // Call your LLM service
     let completion = try await yourLLMService.complete(
-        messages: parameters.messages,
-        maxTokens: parameters.maxTokens,
-        temperature: parameters.temperature
+        messages: params.messages,
+        maxTokens: params.maxTokens,
+        temperature: params.temperature
     )
 
     // Return the result
-    return CreateSamplingMessage.Result(
+    return ClientSamplingRequest.Result(
         model: "your-model-name",
         stopReason: .endTurn,
         role: .assistant,
@@ -234,15 +252,12 @@ await client.withSamplingHandler { parameters in
 Servers can request additional information from users through elicitation. Register a handler to display these requests:
 
 ```swift
-await client.withElicitationHandler { request in
-    // Display the form to the user based on request.requestedSchema
-    let userResponses = try await showFormToUser(
-        message: request.message,
-        schema: request.requestedSchema
-    )
+client.withElicitationHandler { params, context in
+    // Display the form to the user based on the request
+    let userResponses = try await showFormToUser(params)
 
     // Return the user's responses
-    return ElicitResult(
+    return Elicit.Result(
         action: .accept,
         content: userResponses
     )
@@ -254,7 +269,8 @@ Elicitation schemas can include various field types:
 ```swift
 // The server might request:
 ElicitationSchema(properties: [
-    "apiKey": .string(StringSchema(title: "API Key", format: .password)),
+    "apiKey": .string(StringSchema(title: "API Key")),
+    "email": .string(StringSchema(title: "Email", format: .email)),
     "rememberMe": .boolean(BooleanSchema(title: "Remember Me")),
     "priority": .untitledEnum(UntitledEnumSchema(title: "Priority", enumValues: ["low", "medium", "high"]))
 ])
@@ -265,7 +281,7 @@ ElicitationSchema(properties: [
 Expose filesystem roots to the server:
 
 ```swift
-await client.withRootsHandler {
+client.withRootsHandler { context in
     return [
         Root(uri: "file:///Users/me/projects", name: "Projects"),
         Root(uri: "file:///Users/me/documents", name: "Documents")
@@ -287,7 +303,7 @@ try await client.withBatch { batch in
     for i in 0..<10 {
         toolTasks.append(
             try await batch.addRequest(
-                CallTool.request(.init(name: "square", arguments: ["n": Value(i)]))
+                CallTool.request(.init(name: "square", arguments: ["n": i]))
             )
         )
     }
@@ -308,7 +324,7 @@ Configure timeouts for individual requests:
 // Set a custom timeout
 let result = try await client.send(
     CallTool.request(.init(name: "slow-operation", arguments: [:])),
-    timeout: .seconds(60)
+    options: .init(timeout: .seconds(60))
 )
 ```
 
@@ -321,7 +337,7 @@ Cancel in-flight requests:
 let requestId = RequestId.string(UUID().uuidString)
 let task = Task {
     try await client.send(
-        CallTool.request(.init(name: "long-operation", arguments: [:]), id: requestId)
+        CallTool.request(id: requestId, .init(name: "long-operation", arguments: [:]))
     )
 }
 
@@ -390,10 +406,10 @@ do {
     try await client.connect(transport: transport)
 } catch let error as MCPError {
     switch error {
-    case .connectionClosed(let reason):
-        print("Connection closed: \(reason ?? "unknown")")
-    case .requestTimeout(let message):
-        print("Timeout: \(message ?? "")")
+    case .connectionClosed:
+        print("Connection closed")
+    case .requestTimeout(let timeout, let message):
+        print("Timeout after \(timeout): \(message ?? "")")
     case .methodNotFound(let method):
         print("Method not found: \(method ?? "")")
     default:

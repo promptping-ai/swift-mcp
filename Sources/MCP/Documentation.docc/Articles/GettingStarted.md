@@ -2,91 +2,22 @@
 
 Get up and running with the MCP Swift SDK.
 
-## Overview
+## In-Process Connection
 
-This guide walks you through installing the SDK and creating your first MCP client and server.
-
-## Installation
-
-Add the MCP Swift SDK to your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/DePasqualeOrg/mcp-swift-sdk", from: "0.1.0")
-]
-```
-
-Then add the dependency to your target:
-
-```swift
-.target(
-    name: "YourTarget",
-    dependencies: [
-        .product(name: "MCP", package: "mcp-swift-sdk")
-    ]
-)
-```
-
-## Platform Requirements
-
-| Platform | Minimum Version |
-|----------|----------------|
-| macOS | 13.0+ |
-| iOS / Mac Catalyst | 16.0+ |
-| watchOS | 9.0+ |
-| tvOS | 16.0+ |
-| visionOS | 1.0+ |
-| Linux | glibc or musl (Ubuntu, Debian, Fedora, Alpine) |
-
-## Quick Start: Client
-
-Create a client that connects to an MCP server and calls a tool:
+The simplest way to get started is connecting a client and server within the same process using ``InMemoryTransport``. This is ideal for testing, learning, and embedded scenarios.
 
 ```swift
 import MCP
 
-// Create a client
-let client = Client(name: "MyApp", version: "1.0.0")
-
-// Connect using stdio transport
-let transport = StdioTransport()
-try await client.connect(transport: transport)
-
-// List available tools
-let toolsResult = try await client.listTools()
-print("Available tools: \(toolsResult.tools.map { $0.name })")
-
-// Call a tool
-let result = try await client.callTool(
-    name: "echo",
-    arguments: ["message": "Hello, MCP!"]
-)
-
-for item in result.content {
-    if case .text(let text, _, _) = item {
-        print("Result: \(text)")
-    }
-}
-```
-
-## Quick Start: Server
-
-Create a server that exposes a simple tool:
-
-```swift
-import MCP
-
-// Create a server with capabilities
+// Create the server
 let server = Server(
     name: "MyServer",
     version: "1.0.0",
-    capabilities: .init(
-        tools: .init(listChanged: true)
-    )
+    capabilities: .init(tools: .init())
 )
 
-// Register tool list handler
-await server.withRequestHandler(ListTools.self) { _ in
+// Handle requests to list tools
+await server.withRequestHandler(ListTools.self) { _, _ in
     return .init(tools: [
         Tool(
             name: "greet",
@@ -102,27 +33,116 @@ await server.withRequestHandler(ListTools.self) { _ in
     ])
 }
 
-// Register tool call handler
-await server.withRequestHandler(CallTool.self) { params in
+// Handle requests to call tools
+await server.withRequestHandler(CallTool.self) { params, _ in
     guard params.name == "greet" else {
         return .init(content: [.text("Unknown tool")], isError: true)
     }
-
     let name = params.arguments?["name"]?.stringValue ?? "World"
     return .init(content: [.text("Hello, \(name)!")])
 }
 
-// Start the server
-let transport = StdioTransport()
-try await server.start(transport: transport)
+// Create the client
+let client = Client(name: "MyApp", version: "1.0.0")
 
-// Keep running
-try await server.waitUntilCompleted()
+// Create a connected transport pair
+let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+
+// Start the server and connect the client
+try await server.start(transport: serverTransport)
+try await client.connect(transport: clientTransport)
+
+// Use the client to interact with the server
+let tools = try await client.listTools()
+print("Available tools: \(tools.tools.map { $0.name })")
+
+let result = try await client.callTool(name: "greet", arguments: ["name": "MCP"])
+if case .text(let text, _, _) = result.content.first {
+    print(text)  // "Hello, MCP!"
+}
+
+// Clean up
+await client.disconnect()
+await server.stop()
 ```
+
+## stdio
+
+```swift
+import MCP
+
+@main
+struct MyMCPServer {
+    static func main() async throws {
+        // Create a server
+        let server = Server(
+            name: "MyServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        // Handle requests to list tools
+        await server.withRequestHandler(ListTools.self) { _, _ in
+            return .init(tools: [
+                Tool(
+                    name: "echo",
+                    description: "Echo a message",
+                    inputSchema: [
+                        "type": "object",
+                        "properties": [
+                            "message": ["type": "string"]
+                        ],
+                        "required": ["message"]
+                    ]
+                )
+            ])
+        }
+
+        // Handle requests to call tools
+        await server.withRequestHandler(CallTool.self) { params, _ in
+            guard params.name == "echo" else {
+                return .init(content: [.text("Unknown tool")], isError: true)
+            }
+            let message = params.arguments?["message"]?.stringValue ?? ""
+            return .init(content: [.text(message)])
+        }
+
+        // Start the server using stdio transport (reads from stdin, writes to stdout)
+        let transport = StdioTransport()
+        try await server.start(transport: transport)
+
+        // Block until the server is stopped or the process is terminated
+        try await server.waitUntilCompleted()
+    }
+}
+```
+
+To build a client that spawns a stdio server, see the <doc:ClientGuide>.
+
+## HTTP
+
+HTTP transport enables communication over the network—locally, on a LAN, or remotely.
+
+```swift
+import MCP
+
+let client = Client(name: "MyApp", version: "1.0.0")
+
+let transport = HTTPClientTransport(
+    endpoint: URL(string: "https://api.example.com/mcp")!
+)
+
+try await client.connect(transport: transport)
+
+// Use the client
+let tools = try await client.listTools()
+let result = try await client.callTool(name: "ping", arguments: [:])
+```
+
+For building HTTP servers, see the [integration examples](https://github.com/DePasqualeOrg/mcp-swift-sdk/tree/main/Examples) with Hummingbird and Vapor.
 
 ## Next Steps
 
-- <doc:ClientGuide> - Complete guide to building MCP clients
-- <doc:ServerGuide> - Complete guide to building MCP servers
-- <doc:Transports> - Available transport options
-- <doc:Examples> - HTTP server integration examples
+- <doc:ClientGuide>: Complete guide to building MCP clients
+- <doc:ServerGuide>: Complete guide to building MCP servers
+- <doc:Transports>: Available transport options

@@ -37,7 +37,7 @@ Tools represent functions that clients can call.
 
 ```swift
 // Register tool list handler
-await server.withRequestHandler(ListTools.self) { _ in
+await server.withRequestHandler(ListTools.self) { _, _ in
     return .init(tools: [
         Tool(
             name: "weather",
@@ -55,7 +55,7 @@ await server.withRequestHandler(ListTools.self) { _ in
 }
 
 // Register tool call handler
-await server.withRequestHandler(CallTool.self) { params in
+await server.withRequestHandler(CallTool.self) { params, _ in
     switch params.name {
     case "weather":
         let location = params.arguments?["location"]?.stringValue ?? "Unknown"
@@ -97,7 +97,7 @@ Tool(
     description: "Search the web",
     inputSchema: [...],
     icons: [
-        Icon(uri: "https://example.com/search-icon.png", mimeType: "image/png")
+        Icon(src: "https://example.com/search-icon.png", mimeType: "image/png")
     ]
 )
 ```
@@ -125,7 +125,7 @@ Tool(
 Return structured content alongside text:
 
 ```swift
-await server.withRequestHandler(CallTool.self) { params in
+await server.withRequestHandler(CallTool.self) { params, _ in
     let data: [String: Value] = [
         "temperature": 22.5,
         "conditions": "Partly cloudy"
@@ -146,14 +146,14 @@ Resources represent data that clients can access.
 
 ```swift
 // List available resources
-await server.withRequestHandler(ListResources.self) { _ in
+await server.withRequestHandler(ListResources.self) { _, _ in
     return .init(resources: [
         Resource(
             name: "Configuration",
             uri: "config://app",
             description: "Application configuration",
             mimeType: "application/json",
-            icons: [Icon(uri: "https://example.com/config-icon.png", mimeType: "image/png")]
+            icons: [Icon(src: "https://example.com/config-icon.png", mimeType: "image/png")]
         ),
         Resource(
             name: "Logs",
@@ -164,7 +164,7 @@ await server.withRequestHandler(ListResources.self) { _ in
 }
 
 // Read resource content
-await server.withRequestHandler(ReadResource.self) { params in
+await server.withRequestHandler(ReadResource.self) { params, _ in
     switch params.uri {
     case "config://app":
         let config = loadConfiguration()
@@ -173,7 +173,7 @@ await server.withRequestHandler(ReadResource.self) { params in
         ])
 
     default:
-        throw MCPError.resourceNotFound("Unknown resource: \(params.uri)")
+        throw MCPError.resourceNotFound(uri: params.uri)
     }
 }
 ```
@@ -183,8 +183,8 @@ await server.withRequestHandler(ReadResource.self) { params in
 Expose dynamic resources with URI templates:
 
 ```swift
-await server.withRequestHandler(ListResourceTemplates.self) { _ in
-    return .init(resourceTemplates: [
+await server.withRequestHandler(ListResourceTemplates.self) { _, _ in
+    return .init(templates: [
         Resource.Template(
             uriTemplate: "file:///{path}",
             name: "File",
@@ -216,7 +216,7 @@ Prompts are templated conversation starters.
 ### Registering Prompts
 
 ```swift
-await server.withRequestHandler(ListPrompts.self) { _ in
+await server.withRequestHandler(ListPrompts.self) { _, _ in
     return .init(prompts: [
         Prompt(
             name: "code-review",
@@ -229,7 +229,7 @@ await server.withRequestHandler(ListPrompts.self) { _ in
     ])
 }
 
-await server.withRequestHandler(GetPrompt.self) { params in
+await server.withRequestHandler(GetPrompt.self) { params, _ in
     guard params.name == "code-review" else {
         throw MCPError.invalidParams("Unknown prompt: \(params.name)")
     }
@@ -252,7 +252,7 @@ await server.withRequestHandler(GetPrompt.self) { params in
 Provide autocomplete suggestions for prompt arguments and resource templates:
 
 ```swift
-await server.withRequestHandler(Complete.self) { params in
+await server.withRequestHandler(Complete.self) { params, _ in
     switch params.ref {
     case .prompt(let promptRef):
         // Autocomplete prompt arguments
@@ -305,8 +305,8 @@ Send progress updates during long-running operations:
 await server.withRequestHandler(CallTool.self) { params, context in
     guard params.name == "process-data" else { ... }
 
-    // Get the progress token from the request
-    let progressToken = params._meta?.progressToken
+    // Get the progress token from the context
+    let progressToken = context._meta?.progressToken
 
     // Report progress
     if let token = progressToken {
@@ -346,11 +346,11 @@ Request additional information from users through the client.
 await server.withRequestHandler(CallTool.self) { params, context in
     // Request user input
     let result = try await context.elicit(
-        message: "Please provide your credentials",
+        message: "Please provide your information",
         requestedSchema: ElicitationSchema(properties: [
             "username": .string(StringSchema(title: "Username")),
-            "password": .string(StringSchema(title: "Password", format: .password))
-        ], required: ["username", "password"])
+            "email": .string(StringSchema(title: "Email", format: .email))
+        ], required: ["username", "email"])
     )
 
     guard result.action == .accept, let content = result.content else {
@@ -377,19 +377,9 @@ try await context.elicitUrl(
 
 ## Sampling
 
-Request LLM completions from the client. Enable the capability first:
+Request LLM completions from the client. The client must have sampling capability enabled and a sampling handler registered.
 
-```swift
-let server = Server(
-    name: "MyServer",
-    version: "1.0.0",
-    capabilities: .init(
-        sampling: .init()  // Enable sampling
-    )
-)
-```
-
-Then request completions:
+> Note: Sampling is a client capability, not a server capability. Servers request sampling from clients that support it.
 
 ```swift
 await server.withRequestHandler(CallTool.self) { [server] params, context in
@@ -510,5 +500,4 @@ await server.withRequestHandler(CallTool.self) { params, context in
 
 - <doc:ClientGuide>
 - <doc:Transports>
-- <doc:Examples>
 - ``Server``

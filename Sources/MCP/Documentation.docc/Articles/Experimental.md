@@ -43,13 +43,13 @@ Clients can poll for task status:
 
 ```swift
 // Get a specific task
-let task = try await client.experimental.tasks.get(taskId)
+let task = try await client.experimental.tasks.getTask(taskId)
 
 // List all tasks
-let tasks = try await client.experimental.tasks.list()
+let tasks = try await client.experimental.tasks.listTasks()
 
 // Cancel a task
-try await client.experimental.tasks.cancel(taskId, reason: "User requested")
+try await client.experimental.tasks.cancelTask(taskId)
 ```
 
 ### Task Lifecycle
@@ -75,14 +75,14 @@ Tool(
     name: "long-operation",
     description: "A long-running operation",
     inputSchema: [...],
-    execution: .init(taskSupport: .supported)  // or .required
+    execution: .init(taskSupport: .optional)  // or .required
 )
 ```
 
 Task support levels:
-- `.required` - Clients MUST invoke as a task
-- `.optional` - Clients MAY invoke as a task
-- `.forbidden` - Clients MUST NOT invoke as a task (default)
+- `.required`: Clients MUST invoke as a task
+- `.optional`: Clients MAY invoke as a task
+- `.forbidden`: Clients MUST NOT invoke as a task (default)
 
 ### Sending Task Status Updates
 
@@ -90,11 +90,10 @@ From within a request handler, send task status updates:
 
 ```swift
 await server.withRequestHandler(CallTool.self) { params, context in
-    // Create a task
-    let task = MCPTask(
-        id: UUID().uuidString,
-        status: .working,
-        message: "Starting operation..."
+    // Create a task using the helper function
+    let task = createTaskState(
+        metadata: TaskMetadata(),
+        taskId: UUID().uuidString
     )
 
     // Send initial status
@@ -106,14 +105,14 @@ await server.withRequestHandler(CallTool.self) { params, context in
 
         // Update status
         var updated = task
-        updated.message = "Processing chunk \(i)/10"
+        updated.statusMessage = "Processing chunk \(i)/10"
         try await context.sendTaskStatus(task: updated)
     }
 
     // Mark complete
     var completed = task
     completed.status = .completed
-    completed.message = "Operation finished"
+    completed.statusMessage = "Operation finished"
     try await context.sendTaskStatus(task: completed)
 
     return .init(content: [.text("Done")])
@@ -125,14 +124,15 @@ await server.withRequestHandler(CallTool.self) { params, context in
 Tasks include metadata that can be read by clients:
 
 ```swift
+let now = ISO8601DateFormatter().string(from: Date())
 let task = MCPTask(
-    id: taskId,
+    taskId: taskId,
     status: .working,
-    message: "Processing...",
-    progress: 0.5,           // 50% complete
-    progressTotal: 1.0,
-    createdAt: Date(),
-    updatedAt: Date()
+    ttl: nil,
+    createdAt: now,
+    lastUpdatedAt: now,
+    pollInterval: 500,
+    statusMessage: "Processing..."
 )
 ```
 
@@ -179,14 +179,16 @@ await server.experimental.tasks.enable(taskSupport)
 ```
 
 The `TaskStore` protocol requires:
-- `store(_:)` - Save a task
-- `get(_:)` - Retrieve a task by ID
-- `list()` - List all tasks
-- `delete(_:)` - Remove a task
+- `createTask(metadata:taskId:)`: Create a new task
+- `getTask(taskId:)`: Retrieve a task by ID
+- `updateTask(taskId:status:statusMessage:)`: Update task status
+- `listTasks(cursor:)`: List all tasks with pagination
+- `deleteTask(taskId:)`: Remove a task
 
 The `TaskMessageQueue` protocol requires:
-- `enqueue(_:forTask:)` - Queue a message for a task
-- `dequeue(forTask:)` - Get next message for a task
+- `enqueue(taskId:message:maxSize:)`: Queue a message for a task
+- `dequeue(taskId:)`: Get next message for a task
+- `dequeueAll(taskId:)`: Remove all messages for a task
 
 ### Example: Long-Running Analysis
 
@@ -196,19 +198,20 @@ await server.withRequestHandler(CallTool.self) { params, context in
 
     let taskId = UUID().uuidString
 
-    // Create and register task
-    var task = MCPTask(id: taskId, status: .working, message: "Initializing...")
+    // Create and register task using the helper function
+    var task = createTaskState(metadata: TaskMetadata(), taskId: taskId)
+    task.statusMessage = "Initializing..."
     try await context.sendTaskStatus(task: task)
 
     // Phase 1: Load data
-    task.message = "Loading data..."
+    task.statusMessage = "Loading data..."
     try await context.sendTaskStatus(task: task)
     let data = try await loadData()
 
     // Phase 2: Analyze (might need user input)
     if data.needsConfiguration {
         task.status = .inputRequired
-        task.message = "Please configure analysis parameters"
+        task.statusMessage = "Please configure analysis parameters"
         try await context.sendTaskStatus(task: task)
 
         // Request configuration from user
@@ -218,7 +221,7 @@ await server.withRequestHandler(CallTool.self) { params, context in
         )
 
         task.status = .working
-        task.message = "Analyzing with configuration..."
+        task.statusMessage = "Analyzing with configuration..."
         try await context.sendTaskStatus(task: task)
     }
 
@@ -226,7 +229,7 @@ await server.withRequestHandler(CallTool.self) { params, context in
     let result = try await analyze(data)
 
     task.status = .completed
-    task.message = "Analysis complete"
+    task.statusMessage = "Analysis complete"
     try await context.sendTaskStatus(task: task)
 
     return .init(content: [.text(result.summary)])
