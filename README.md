@@ -12,6 +12,8 @@ All of the functionality from protocol version 2025-11-25 has been implemented h
 - JSON schema validation
 - OAuth
 
+This repository also resolves [bugs and spec compliance issues](https://github.com/modelcontextprotocol/swift-sdk/pull/175#issuecomment-3718183682) in the official SDK.
+
 ## Guides
 
 - [Getting Started](https://swiftpackageindex.com/DePasqualeOrg/mcp-swift-sdk/main/documentation/mcp/getting-started)
@@ -25,4 +27,5 @@ All of the functionality from protocol version 2025-11-25 has been implemented h
 
 ## References
 
-- [MCP Specification](https://modelcontextprotocol.io/specification/2025-11-25/)
+- [MCP documentation](https://modelcontextprotocol.io/docs/getting-started/intro)
+- [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/)
