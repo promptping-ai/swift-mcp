@@ -6,6 +6,15 @@ Share filesystem locations with MCP servers
 
 Roots allow clients to inform servers about which filesystem directories are available for operations. When a server needs to understand the scope of files it can work with, it requests the list of roots from the client.
 
+## Security Considerations
+
+Client implementations should:
+
+- Prompt users for consent before exposing roots to servers
+- Provide clear UI for managing which directories are shared
+- Validate root accessibility before exposing them
+- Only expose roots with appropriate permissions
+
 ## Declaring Roots Capability
 
 Before providing roots, declare the capability when setting up your client:

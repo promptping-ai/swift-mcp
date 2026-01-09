@@ -135,7 +135,16 @@ return ElicitResult(
 
 ## URL Mode Elicitation
 
-In URL mode, direct the user to complete an external flow:
+In URL mode, direct the user to complete an external flow. URL mode is used for sensitive interactions like OAuth flows and credential entry that should not pass through the MCP client.
+
+### Security Requirements
+
+When handling URL elicitation:
+
+- Do not automatically open URLs without user consent
+- Show the full URL to the user before opening
+- Open URLs in a secure browser context (e.g., `SFSafariViewController` on iOS, not `WKWebView`)
+- Highlight the domain to help users identify the destination
 
 ```swift
 func handleURLElicitation(_ params: ElicitRequestURLParams) async throws -> ElicitResult {
@@ -143,12 +152,15 @@ func handleURLElicitation(_ params: ElicitRequestURLParams) async throws -> Elic
     // params.url - The URL to open
     // params.elicitationId - ID to track this elicitation
 
-    // Open the URL in a browser
-    await openURL(URL(string: params.url)!)
+    // Show URL to user and get consent before opening
+    guard await getUserConsent(url: params.url, message: params.message) else {
+        return ElicitResult(action: .decline)
+    }
 
-    // Wait for the server to notify completion
+    // Open in a secure browser context
+    await openURLSecurely(URL(string: params.url)!)
+
     // The server sends ElicitationCompleteNotification when done
-
     return ElicitResult(action: .accept)
 }
 ```

@@ -6,6 +6,17 @@ Handle LLM completion requests from MCP servers
 
 Sampling enables servers to request LLM completions through the client. This allows servers to perform sophisticated AI-powered tasks while the client maintains control over model access. When a server needs AI assistance, it sends a sampling request to the client, which processes it using its LLM service.
 
+## Human-in-the-Loop
+
+Client implementations should include human oversight for sampling requests:
+
+- Provide UI to review sampling requests before processing
+- Allow users to view and edit prompts before sending to the LLM
+- Present generated responses for review before returning to the server
+- Give users the ability to deny or modify any sampling request
+
+This ensures users maintain control over AI interactions initiated by servers.
+
 ## Declaring Sampling Capability
 
 Before you can handle sampling requests, declare the sampling capability when setting up your client:

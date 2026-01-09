@@ -42,6 +42,22 @@ await server.withRequestHandler(GetPrompt.self) { params, _ in
 }
 ```
 
+## Prompt Metadata
+
+Prompts support additional metadata for display:
+
+```swift
+Prompt(
+    name: "code-review",
+    title: "Code Review Assistant",  // Human-readable display name
+    description: "Review code for best practices",
+    arguments: [...],
+    icons: [
+        Icon(src: "https://example.com/review-icon.png", mimeType: "image/png")
+    ]
+)
+```
+
 ## Prompt Arguments
 
 Define what arguments a prompt accepts:
@@ -97,24 +113,24 @@ GetPrompt.Result(messages: [
 
 ## Rich Content
 
-Messages can contain different content types:
+Messages can contain different content types. Use the `.user(_:)` or `.assistant(_:)` factory methods:
 
 ### Text
 
 ```swift
-Prompt.Message(
-    role: .user,
-    content: .text("Hello, world!")
-)
+Prompt.Message.user(.text("Hello, world!"))
 ```
 
 ### Images
 
 ```swift
-Prompt.Message(
-    role: .user,
-    content: .image(data: imageBase64, mimeType: "image/png")
-)
+Prompt.Message.user(.image(data: imageBase64, mimeType: "image/png"))
+```
+
+### Audio
+
+```swift
+Prompt.Message.user(.audio(data: audioBase64, mimeType: "audio/wav"))
 ```
 
 ### Resources
@@ -122,22 +138,7 @@ Prompt.Message(
 Include resource content in messages:
 
 ```swift
-Prompt.Message(
-    role: .user,
-    content: .resource(uri: "file:///data.json", mimeType: "application/json", text: jsonContent)
-)
-```
-
-### Multiple Content Items
-
-```swift
-Prompt.Message(
-    role: .user,
-    content: [
-        .text("Please analyze this image:"),
-        .image(data: imageData, mimeType: "image/png")
-    ]
-)
+Prompt.Message.user(.resource(uri: "file:///data.json", mimeType: "application/json", text: jsonContent))
 ```
 
 ## Notifying Prompt Changes

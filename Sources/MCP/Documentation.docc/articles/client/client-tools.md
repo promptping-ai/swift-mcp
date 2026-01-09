@@ -6,6 +6,15 @@ List and call tools provided by MCP servers
 
 Tools represent functions that servers expose for clients to call. Each tool has a name, description, and input schema that defines its parameters. This guide covers discovering available tools and calling them.
 
+## Security Considerations
+
+When invoking tools, client implementations should:
+
+- Show tool inputs to the user before calling the server to prevent accidental or malicious data exfiltration
+- Prompt for user confirmation on sensitive or destructive operations (check `annotations.destructiveHint`)
+- Implement timeouts for tool calls
+- Log tool usage for audit purposes
+
 ## Listing Tools
 
 Use ``Client/listTools(cursor:)`` to discover available tools:

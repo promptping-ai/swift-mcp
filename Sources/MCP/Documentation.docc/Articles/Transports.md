@@ -75,6 +75,39 @@ Host MCP servers over HTTP. Integrates with any HTTP framework (Hummingbird, Vap
 
 **Platforms:** All platforms with Foundation
 
+### Security
+
+DNS rebinding attacks allow malicious websites to bypass browser same-origin policy and access local servers. The SDK provides built-in protection:
+
+```swift
+// Auto-configures DNS rebinding protection for localhost addresses
+let transport = HTTPServerTransport(
+    options: .forBindAddress(
+        host: "127.0.0.1",
+        port: 8080,
+        sessionIdGenerator: { UUID().uuidString }
+    )
+)
+```
+
+When binding to localhost (`127.0.0.1`, `localhost`, or `::1`), `forBindAddress` automatically enables Host and Origin header validation. For non-localhost addresses, configure security manually if needed:
+
+```swift
+let transport = HTTPServerTransport(
+    options: .init(
+        security: TransportSecuritySettings(
+            enableDnsRebindingProtection: true,
+            allowedHosts: ["myserver.local:8080"],
+            allowedOrigins: ["http://myserver.local:8080"]
+        )
+    )
+)
+```
+
+Additional security practices:
+- Bind to localhost rather than all interfaces (0.0.0.0) when possible
+- Implement proper authentication for all connections
+
 ### Stateful Mode
 
 Track sessions with unique IDs:

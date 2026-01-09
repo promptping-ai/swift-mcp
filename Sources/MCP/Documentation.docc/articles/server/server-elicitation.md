@@ -10,6 +10,21 @@ There are two modes:
 - **Form mode**: Present a form with structured fields
 - **URL mode**: Direct users to an external URL (e.g., OAuth)
 
+## Security: Choosing the Right Mode
+
+> Important: Servers must not use form mode to request sensitive information like passwords, API keys, or payment details. Use URL mode for any interaction involving sensitive data.
+
+**Use form mode for:**
+- User preferences and settings
+- Non-sensitive configuration
+- Confirmations and choices
+
+**Use URL mode for:**
+- Authentication credentials
+- API keys and secrets
+- OAuth authorization flows
+- Payment information
+
 ## Form Elicitation
 
 Request structured input using ``Server/RequestHandlerContext/elicit(message:requestedSchema:)``:

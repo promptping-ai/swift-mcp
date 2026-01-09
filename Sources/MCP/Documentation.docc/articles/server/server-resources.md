@@ -83,20 +83,47 @@ ReadResource.Result(contents: [
 ])
 ```
 
-## Resource Icons
+## Resource Metadata
 
-Add visual representation:
+Resources support optional metadata:
 
 ```swift
 Resource(
-    name: "Database",
-    uri: "db://main",
-    description: "Main database",
+    name: "report.pdf",
+    uri: "file:///docs/report.pdf",
+    description: "Monthly report",
+    mimeType: "application/pdf",
+    size: 1048576,  // Size in bytes (1 MB)
     icons: [
-        Icon(src: "https://example.com/db-icon.png", mimeType: "image/png")
+        Icon(src: "https://example.com/pdf-icon.png", mimeType: "image/png")
     ]
 )
 ```
+
+The `size` field helps clients display file sizes or make decisions about downloading large resources.
+
+## Resource Annotations
+
+Resources and content blocks support optional annotations that help clients understand how to use them:
+
+- **audience**: Who should see this resource (`["user"]`, `["assistant"]`, or `["user", "assistant"]`)
+- **priority**: Importance from 0.0 (optional) to 1.0 (required)
+- **lastModified**: ISO 8601 timestamp of last modification
+
+```swift
+Resource(
+    name: "README",
+    uri: "file:///project/README.md",
+    mimeType: "text/markdown",
+    annotations: .init(
+        audience: [.user],
+        priority: 0.8,
+        lastModified: "2025-01-09T12:00:00Z"
+    )
+)
+```
+
+Clients can use annotations to filter resources, prioritize context inclusion, or display modification times.
 
 ## Resource Templates
 

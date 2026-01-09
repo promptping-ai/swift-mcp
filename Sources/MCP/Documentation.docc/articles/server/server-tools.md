@@ -6,6 +6,16 @@ Register tools that clients can discover and call
 
 Tools are functions that your server exposes to clients. Each tool has a name, description, and input schema. Clients can list available tools and call them with arguments.
 
+## Tool Naming
+
+Tool names should follow these conventions:
+- Between 1 and 128 characters
+- Case-sensitive
+- Use only: letters (A-Z, a-z), digits (0-9), underscore (_), hyphen (-), and dot (.)
+- Unique within your server
+
+Examples: `getUser`, `DATA_EXPORT_v2`, `admin.tools.list`
+
 ## Registering Tools
 
 Register handlers for listing and calling tools:
@@ -148,16 +158,41 @@ CallTool.Result(content: [
 ])
 ```
 
-## Error Responses
+## Error Handling
 
-Indicate tool errors using the `isError` flag:
+MCP distinguishes between two types of errors:
+
+### Protocol Errors
+
+Use ``MCPError`` for issues with the request itself:
+- Unknown tool name
+- Malformed request structure
+- Server internal errors
+
+```swift
+await server.withRequestHandler(CallTool.self) { params, _ in
+    guard knownTools.contains(params.name) else {
+        throw MCPError.invalidParams("Unknown tool: \(params.name)")
+    }
+    // ...
+}
+```
+
+### Tool Execution Errors
+
+Use `isError: true` for errors during tool execution that the model might be able to recover from:
+- API failures
+- Input validation errors (wrong format, out of range)
+- Business logic errors
 
 ```swift
 CallTool.Result(
-    content: [.text("File not found: /path/to/file")],
+    content: [.text("Invalid date: must be in the future")],
     isError: true
 )
 ```
+
+Tool execution errors provide actionable feedback that language models can use to self-correct and retry with adjusted parameters.
 
 ## Output Schema and Structured Content
 
