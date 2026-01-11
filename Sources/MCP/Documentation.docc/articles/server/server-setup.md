@@ -1,10 +1,15 @@
 # Server Setup
 
-Create an MCP server and handle client connections
+Create an MCP server and handle client connections.
 
 ## Overview
 
-The ``Server`` handles incoming connections from MCP clients, processes requests, and sends responses. This guide covers creating a server, configuring capabilities, and managing the server lifecycle.
+The Swift SDK provides two server APIs:
+
+- **``MCPServer``**: High-level API with automatic capability management, tool/resource/prompt registration, and lifecycle handling (recommended)
+- **``Server``**: Low-level API for custom request handling and advanced use cases
+
+This guide covers the high-level ``MCPServer``. For the low-level API, see <doc:server-advanced>.
 
 ## Creating a Server
 
@@ -13,16 +18,13 @@ Create a server with your implementation's identity:
 ```swift
 import MCP
 
-let server = Server(
-    name: "MyServer",
-    version: "1.0.0"
-)
+let server = MCPServer(name: "MyServer", version: "1.0.0")
 ```
 
 You can provide additional metadata:
 
 ```swift
-let server = Server(
+let server = MCPServer(
     name: "MyServer",
     version: "1.0.0",
     title: "My MCP Server",
@@ -33,193 +35,142 @@ let server = Server(
 )
 ```
 
-## Declaring Capabilities
+## Registering Tools, Resources, and Prompts
 
-Declare which features your server supports:
+``MCPServer`` manages capabilities automatically based on what you register:
 
 ```swift
-let server = Server(
+// Register tools - enables tools capability
+try await server.register {
+    GetWeather.self
+    Search.self
+}
+
+// Register resources - enables resources capability
+try await server.registerResource(
+    uri: "config://app",
+    name: "Configuration"
+) { ... }
+
+// Register prompts - enables prompts capability
+try await server.register {
+    CodeReview.self
+}
+```
+
+See <doc:server-tools>, <doc:server-resources>, and <doc:server-prompts> for detailed registration APIs.
+
+### Capability Overrides
+
+For dynamic registration scenarios (e.g., tools determined by client identity after authentication),
+you can force capabilities via the initializer:
+
+```swift
+let server = MCPServer(
     name: "MyServer",
     version: "1.0.0",
-    capabilities: Server.Capabilities(
-        tools: .init(listChanged: true),
-        resources: .init(subscribe: true, listChanged: true),
-        prompts: .init(listChanged: true),
-        logging: .init(),
-        completions: .init()
-    )
-)
-```
-
-### Capability Options
-
-- **tools**: Server provides tools
-  - `listChanged`: Server notifies when tools change
-- **resources**: Server provides resources
-  - `subscribe`: Clients can subscribe to resource updates
-  - `listChanged`: Server notifies when resource list changes
-- **prompts**: Server provides prompts
-  - `listChanged`: Server notifies when prompts change
-- **logging**: Server accepts log level configuration
-- **completions**: Server provides autocomplete suggestions
-
-## Starting the Server
-
-Start the server with a transport:
-
-```swift
-try await server.start(transport: transport)
-```
-
-For stdio servers (most common), use ``StdioTransport``:
-
-```swift
-import System
-
-let transport = StdioTransport(
-    input: FileDescriptor.standardInput,
-    output: FileDescriptor.standardOutput
-)
-try await server.start(transport: transport)
-await server.waitUntilCompleted()
-```
-
-## Initialize Hook
-
-Run custom logic when clients connect using the initialize hook:
-
-```swift
-try await server.start(transport: transport) { clientInfo, clientCapabilities in
-    print("Client connected: \(clientInfo.name) v\(clientInfo.version)")
-
-    // Check client capabilities
-    if clientCapabilities.sampling != nil {
-        print("Client supports sampling")
-    }
-
-    // Perform any initialization
-    await loadResources()
-}
-```
-
-The hook receives:
-- `clientInfo`: Information about the connecting client
-- `clientCapabilities`: What the client supports (sampling, roots, etc.)
-
-## Registering Handlers
-
-Register handlers for requests using `withRequestHandler(_:handler:)`:
-
-```swift
-await server.withRequestHandler(ListTools.self) { params, context in
-    ListTools.Result(tools: [
-        Tool(name: "greet", description: "Say hello")
-    ])
-}
-
-await server.withRequestHandler(CallTool.self) { params, context in
-    if params.name == "greet" {
-        return CallTool.Result(content: [.text("Hello!")])
-    }
-    throw MCPError.invalidParams("Unknown tool: \(params.name)")
-}
-```
-
-## Configuration
-
-### Strict Mode
-
-By default, servers enforce strict initialization order:
-
-```swift
-// Default - requires initialize before other requests
-let strictServer = Server(
-    name: "Strict",
-    version: "1.0.0",
-    configuration: .default
+    capabilities: Server.Capabilities(tools: .init(listChanged: true))
 )
 
-// Lenient - allows requests before initialization
-let lenientServer = Server(
-    name: "Lenient",
-    version: "1.0.0",
-    configuration: .lenient
-)
+// Tools capability is advertised even before any tools are registered.
+// Register tools dynamically after client connects:
+try await server.register { toolsForUser(authenticatedUser) }
 ```
 
-Strict mode ensures clients send `initialize` before other requests (except `ping`), following the MCP specification.
+## Running the Server
 
-## Stopping the Server
+### Stdio Transport
 
-Stop the server gracefully:
+For command-line servers (most common):
 
 ```swift
-await server.stop()
+try await server.run(transport: .stdio)
 ```
 
-This:
-1. Cancels in-flight request handlers
-2. Cancels the message processing task
-3. Disconnects the transport
+This connects to stdin/stdout and blocks until the connection closes.
 
-## Waiting for Completion
+### HTTP Transport
 
-Wait for the server to finish processing:
+For HTTP-based servers with multiple concurrent clients, use `createSession()` to create
+per-session Server instances that share tool/resource/prompt definitions:
 
 ```swift
-try await server.start(transport: transport)
-await server.waitUntilCompleted()
+let mcpServer = MCPServer(name: "my-server", version: "1.0.0")
+try await mcpServer.register { Echo.self }
+
+// In your HTTP handler (Vapor, Hummingbird, etc.):
+let session = await mcpServer.createSession()
+let transport = HTTPServerTransport(...)
+try await session.start(transport: transport)
 ```
 
-This blocks until the transport disconnects or the server stops.
+See the [VaporIntegration](https://github.com/DePasqualeOrg/mcp-swift-sdk/tree/main/Examples/VaporIntegration)
+and [HummingbirdIntegration](https://github.com/DePasqualeOrg/mcp-swift-sdk/tree/main/Examples/HummingbirdIntegration)
+examples for complete implementations.
+
+For simple demos and testing, `BasicHTTPSessionManager` handles session lifecycle automatically:
+
+```swift
+let sessionManager = BasicHTTPSessionManager(server: mcpServer, port: 8080)
+// In your HTTP route:
+let response = await sessionManager.handleRequest(httpRequest)
+```
+
+### Custom Transport
+
+For other transports:
+
+```swift
+let transport = // your custom transport
+try await server.run(transport: .custom(transport))
+```
 
 ## Complete Example
 
 ```swift
 import MCP
-import System
+
+@Tool
+struct Echo {
+    static let name = "echo"
+    static let description = "Echo back a message"
+
+    @Parameter(description: "Message to echo")
+    var message: String
+
+    func perform(context: HandlerContext) async throws -> String {
+        "Echo: \(message)"
+    }
+}
 
 @main
 struct MyServer {
     static func main() async throws {
-        let server = Server(
-            name: "MyServer",
+        let server = MCPServer(
+            name: "EchoServer",
             version: "1.0.0",
-            capabilities: Server.Capabilities(
-                tools: .init()
-            )
+            description: "A simple echo server"
         )
 
-        // Register tool handlers
-        await server.withRequestHandler(ListTools.self) { _, _ in
-            ListTools.Result(tools: [
-                Tool(name: "echo", description: "Echo back input")
-            ])
+        try await server.register {
+            Echo.self
         }
 
-        await server.withRequestHandler(CallTool.self) { params, _ in
-            guard params.name == "echo" else {
-                throw MCPError.invalidParams("Unknown tool")
-            }
-            let message = params.arguments?["message"]?.stringValue ?? ""
-            return CallTool.Result(content: [.text(message)])
-        }
-
-        // Start with stdio transport
-        let transport = StdioTransport(
-            input: FileDescriptor.standardInput,
-            output: FileDescriptor.standardOutput
-        )
-        try await server.start(transport: transport)
-        await server.waitUntilCompleted()
+        try await server.run(transport: .stdio)
     }
 }
 ```
+
+## Low-Level Server API
+
+For scenarios requiring custom request handling, direct protocol access, or mixing high-level registration with manual handlers, see <doc:server-advanced>.
 
 ## See Also
 
 - <doc:server-tools>
 - <doc:server-resources>
 - <doc:server-prompts>
+- <doc:server-advanced>
 - <doc:transports>
+- ``MCPServer``
 - ``Server``

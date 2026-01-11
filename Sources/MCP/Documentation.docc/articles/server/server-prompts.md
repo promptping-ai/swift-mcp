@@ -1,84 +1,153 @@
 # Prompts
 
-Register prompt templates that clients can discover and use
+Register prompt templates that clients can discover and use.
 
 ## Overview
 
 Prompts are templated conversation starters that your server exposes to clients. Each prompt can accept arguments to customize its content. Clients can list prompts and retrieve rendered messages.
 
-## Registering Prompts
+The Swift SDK provides two approaches:
+- **`@Prompt` macro**: Define prompts as Swift types with automatic argument handling (recommended)
+- **Closure-based**: Register prompts dynamically at runtime
 
-Register handlers for listing and getting prompts:
+## Defining Prompts
+
+The `@Prompt` macro generates argument definitions and handles parsing automatically:
 
 ```swift
-await server.withRequestHandler(ListPrompts.self) { _, _ in
-    ListPrompts.Result(prompts: [
-        Prompt(
-            name: "code-review",
-            description: "Review code for best practices",
-            arguments: [
-                .init(name: "language", description: "Programming language", required: true),
-                .init(name: "code", description: "Code to review", required: true)
-            ]
-        )
-    ])
-}
+@Prompt
+struct CodeReview {
+    static let name = "code-review"
+    static let description = "Review code for best practices"
 
-await server.withRequestHandler(GetPrompt.self) { params, _ in
-    guard params.name == "code-review" else {
-        throw MCPError.invalidParams("Unknown prompt: \(params.name)")
-    }
+    @Argument(description: "Programming language")
+    var language: String
 
-    let language = params.arguments?["language"] ?? "unknown"
-    let code = params.arguments?["code"] ?? ""
+    @Argument(description: "Code to review")
+    var code: String
 
-    return GetPrompt.Result(
-        description: "Code review for \(language)",
-        messages: [
+    func render(context: HandlerContext) async throws -> [Prompt.Message] {
+        [
             .user("Please review this \(language) code for best practices:\n\n```\(language)\n\(code)\n```"),
             .assistant("I'll analyze this code for potential improvements...")
         ]
-    )
+    }
 }
 ```
 
-## Prompt Metadata
+### Argument Options
 
-Prompts support additional metadata for display:
+Use `@Argument` to define prompt parameters:
 
 ```swift
-Prompt(
-    name: "code-review",
-    title: "Code Review Assistant",  // Human-readable display name
-    description: "Review code for best practices",
-    arguments: [...],
-    icons: [
-        Icon(src: "https://example.com/review-icon.png", mimeType: "image/png")
-    ]
-)
+@Prompt
+struct Summarize {
+    static let name = "summarize"
+    static let description = "Summarize content"
+
+    @Argument(description: "Content to summarize")
+    var content: String
+
+    @Argument(description: "Summary length: short, medium, long")
+    var length: String?  // Optional argument
+
+    func render(context: HandlerContext) async throws -> [Prompt.Message] {
+        let lengthHint = length.map { " Keep it \($0)." } ?? ""
+        return [.user("Summarize the following:\n\n\(content)\(lengthHint)")]
+    }
+}
 ```
 
-## Prompt Arguments
+## Registering Prompts
 
-Define what arguments a prompt accepts:
+Use ``MCPServer`` to register prompts:
 
 ```swift
-Prompt(
-    name: "summarize",
-    description: "Summarize content",
+let server = MCPServer(name: "MyServer", version: "1.0.0")
+
+// Register multiple prompts with result builder
+try await server.register {
+    CodeReview.self
+    Summarize.self
+}
+
+// Or register individually
+try await server.register(CodeReview.self)
+```
+
+## Dynamic Prompt Registration
+
+For prompts defined at runtime, use closure-based registration:
+
+```swift
+let prompt = try await server.registerPrompt(
+    name: "greeting",
+    description: "A friendly greeting"
+) {
+    [.user(.text("Hello! How can I help you today?"))]
+}
+```
+
+With arguments:
+
+```swift
+let prompt = try await server.registerPrompt(
+    name: "translate",
+    description: "Translate text between languages",
     arguments: [
-        Prompt.Argument(
-            name: "content",
-            description: "Content to summarize",
-            required: true
-        ),
-        Prompt.Argument(
-            name: "length",
-            description: "Desired summary length (short, medium, long)",
-            required: false
-        )
+        .init(name: "text", description: "Text to translate", required: true),
+        .init(name: "from", description: "Source language", required: true),
+        .init(name: "to", description: "Target language", required: true)
     ]
-)
+) { arguments, context in
+    let text = arguments?["text"] ?? ""
+    let from = arguments?["from"] ?? "English"
+    let to = arguments?["to"] ?? "Spanish"
+    return [.user("Translate from \(from) to \(to):\n\n\(text)")]
+}
+```
+
+## Prompt Lifecycle
+
+Registered prompts return a handle for lifecycle management:
+
+```swift
+let prompt = try await server.register(CodeReview.self)
+
+// Temporarily hide from clients
+await prompt.disable()
+
+// Make available again
+await prompt.enable()
+
+// Permanently remove
+await prompt.remove()
+```
+
+Disabled prompts don't appear in `listPrompts` responses and reject get attempts.
+
+## Prompt Metadata
+
+Add metadata for display in clients:
+
+```swift
+@Prompt
+struct CodeReview {
+    static let name = "code-review"
+    static let title = "Code Review Assistant"
+    static let description = "Review code for best practices"
+    // ...
+}
+```
+
+Or for dynamic prompts:
+
+```swift
+try await server.registerPrompt(
+    name: "code-review",
+    title: "Code Review Assistant",
+    description: "Review code for best practices"
+) { ... }
 ```
 
 ## Message Types
@@ -88,32 +157,30 @@ Prompt messages can have different roles:
 ### User Messages
 
 ```swift
-GetPrompt.Result(messages: [
-    .user("Analyze this data...")
-])
+func render(context: HandlerContext) async throws -> [Prompt.Message] {
+    [.user("Analyze this data...")]
+}
 ```
 
 ### Assistant Messages
 
 ```swift
-GetPrompt.Result(messages: [
-    .assistant("I'll help you analyze the data.")
-])
+[.assistant("I'll help you analyze the data.")]
 ```
 
 ### Multi-turn Conversations
 
 ```swift
-GetPrompt.Result(messages: [
+[
     .user("What is the capital of France?"),
     .assistant("The capital of France is Paris."),
     .user("What is its population?")
-])
+]
 ```
 
 ## Rich Content
 
-Messages can contain different content types. Use the `.user(_:)` or `.assistant(_:)` factory methods:
+Messages can contain different content types:
 
 ### Text
 
@@ -141,80 +208,73 @@ Include resource content in messages:
 Prompt.Message.user(.resource(uri: "file:///data.json", mimeType: "application/json", text: jsonContent))
 ```
 
-## Notifying Prompt Changes
+## Notifying Changes
 
-If you declared `prompts.listChanged` capability, notify clients when prompts change:
+``MCPServer`` automatically sends list change notifications when prompts are registered, enabled, disabled, or removed. You can also send manually:
 
 ```swift
-try await context.sendPromptListChanged()
+await server.sendPromptListChanged()
 ```
 
 ## Complete Example
 
 ```swift
-let server = Server(
-    name: "PromptServer",
-    version: "1.0.0",
-    capabilities: Server.Capabilities(
-        prompts: .init(listChanged: true)
-    )
-)
+@Prompt
+struct Explain {
+    static let name = "explain"
+    static let description = "Explain a concept at different levels"
 
-await server.withRequestHandler(ListPrompts.self) { _, _ in
-    ListPrompts.Result(prompts: [
-        Prompt(
-            name: "explain",
-            description: "Explain a concept at different levels",
-            arguments: [
-                .init(name: "topic", description: "Topic to explain", required: true),
-                .init(name: "level", description: "Explanation level: beginner, intermediate, expert", required: false)
-            ]
-        ),
-        Prompt(
-            name: "translate",
-            description: "Translate text between languages",
-            arguments: [
-                .init(name: "text", description: "Text to translate", required: true),
-                .init(name: "from", description: "Source language", required: true),
-                .init(name: "to", description: "Target language", required: true)
-            ]
-        )
-    ])
-}
+    @Argument(description: "Topic to explain")
+    var topic: String
 
-await server.withRequestHandler(GetPrompt.self) { params, _ in
-    switch params.name {
-    case "explain":
-        let topic = params.arguments?["topic"] ?? "topic"
-        let level = params.arguments?["level"] ?? "beginner"
-        return GetPrompt.Result(
-            description: "Explain \(topic) for \(level) level",
-            messages: [
-                .user("Explain \(topic) at a \(level) level.")
-            ]
-        )
+    @Argument(description: "Level: beginner, intermediate, expert")
+    var level: String?
 
-    case "translate":
-        let text = params.arguments?["text"] ?? ""
-        let from = params.arguments?["from"] ?? "English"
-        let to = params.arguments?["to"] ?? "Spanish"
-        return GetPrompt.Result(
-            description: "Translate from \(from) to \(to)",
-            messages: [
-                .user("Translate the following from \(from) to \(to):\n\n\(text)")
-            ]
-        )
-
-    default:
-        throw MCPError.invalidParams("Unknown prompt: \(params.name)")
+    func render(context: HandlerContext) async throws -> [Prompt.Message] {
+        let levelText = level ?? "beginner"
+        return [.user("Explain \(topic) at a \(levelText) level.")]
     }
 }
+
+@Prompt
+struct Translate {
+    static let name = "translate"
+    static let title = "Translation Helper"
+    static let description = "Translate text between languages"
+
+    @Argument(description: "Text to translate")
+    var text: String
+
+    @Argument(description: "Source language")
+    var from: String
+
+    @Argument(description: "Target language")
+    var to: String
+
+    func render(context: HandlerContext) async throws -> [Prompt.Message] {
+        [.user("Translate the following from \(from) to \(to):\n\n\(text)")]
+    }
+}
+
+let server = MCPServer(name: "PromptServer", version: "1.0.0")
+
+try await server.register {
+    Explain.self
+    Translate.self
+}
+
+try await server.run(transport: .stdio)
 ```
+
+## Low-Level API
+
+For advanced use cases like custom request handling, see <doc:server-advanced> for the manual `withRequestHandler` approach.
 
 ## See Also
 
 - <doc:server-setup>
 - <doc:server-completions>
 - <doc:client-prompts>
-- ``Server``
+- ``MCPServer``
 - ``Prompt``
+- ``PromptSpec``

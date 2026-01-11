@@ -1,26 +1,209 @@
 # Advanced
 
-Send progress notifications, log messages, and handle cancellation
+Low-level server API, manual registration patterns, and advanced features.
 
 ## Overview
 
-This guide covers advanced server features including progress reporting, sending notifications, handling cancellation, and using the request handler context.
+This guide covers the low-level ``Server`` API for scenarios where you need direct control over request handling, want to mix high-level and low-level patterns, or need features not exposed by ``MCPServer``.
+
+For most use cases, ``MCPServer`` with `@Tool`, `@Prompt`, and closure-based registration is recommended. See <doc:server-setup>.
+
+## When to Use the Low-Level API
+
+Use ``Server`` directly when you need:
+
+- **Custom request routing**: Complex logic to determine how to handle requests
+- **Dynamic handlers**: Handlers that change based on runtime conditions
+- **Protocol extensions**: Support for custom MCP methods beyond the standard set
+- **Resource subscriptions**: Full control over subscribe/unsubscribe handlers
+- **Mixing patterns**: Combine high-level registration with manual handlers
+
+## Creating a Low-Level Server
+
+```swift
+let server = Server(
+    name: "MyServer",
+    version: "1.0.0",
+    capabilities: Server.Capabilities(
+        tools: .init(listChanged: true),
+        resources: .init(subscribe: true, listChanged: true),
+        prompts: .init(listChanged: true)
+    )
+)
+```
+
+Unlike ``MCPServer``, you must declare capabilities upfront.
+
+## Manual Tool Registration
+
+Register handlers for listing and calling tools:
+
+```swift
+await server.withRequestHandler(ListTools.self) { _, _ in
+    ListTools.Result(tools: [
+        Tool(
+            name: "weather",
+            description: "Get current weather for a location",
+            inputSchema: [
+                "type": "object",
+                "properties": [
+                    "location": ["type": "string", "description": "City name"],
+                    "units": ["type": "string", "enum": ["metric", "imperial"]]
+                ],
+                "required": ["location"]
+            ]
+        )
+    ])
+}
+
+await server.withRequestHandler(CallTool.self) { params, _ in
+    switch params.name {
+    case "weather":
+        let location = params.arguments?["location"]?.stringValue ?? "Unknown"
+        let weather = await getWeather(location: location)
+        return CallTool.Result(content: [.text("Weather in \(location): \(weather)")])
+
+    default:
+        throw MCPError.invalidParams("Unknown tool: \(params.name)")
+    }
+}
+```
+
+## Manual Resource Registration
+
+```swift
+await server.withRequestHandler(ListResources.self) { _, _ in
+    ListResources.Result(resources: [
+        Resource(
+            name: "Configuration",
+            uri: "config://app",
+            description: "Application configuration",
+            mimeType: "application/json"
+        )
+    ])
+}
+
+await server.withRequestHandler(ReadResource.self) { params, _ in
+    switch params.uri {
+    case "config://app":
+        let config = loadConfiguration()
+        return ReadResource.Result(contents: [
+            .text(config.jsonString, uri: params.uri, mimeType: "application/json")
+        ])
+
+    default:
+        throw MCPError.resourceNotFound(uri: params.uri)
+    }
+}
+```
+
+### Resource Templates
+
+```swift
+await server.withRequestHandler(ListResourceTemplates.self) { _, _ in
+    ListResourceTemplates.Result(templates: [
+        Resource.Template(
+            uriTemplate: "file:///{path}",
+            name: "File",
+            description: "Access files by path"
+        )
+    ])
+}
+```
+
+### Resource Subscriptions
+
+```swift
+var subscriptions: Set<String> = []
+
+await server.withRequestHandler(ResourceSubscribe.self) { params, _ in
+    subscriptions.insert(params.uri)
+    return ResourceSubscribe.Result()
+}
+
+await server.withRequestHandler(ResourceUnsubscribe.self) { params, _ in
+    subscriptions.remove(params.uri)
+    return ResourceUnsubscribe.Result()
+}
+
+// Notify subscribers when content changes
+func onResourceChanged(uri: String) async throws {
+    if subscriptions.contains(uri) {
+        try await server.notify(ResourceUpdatedNotification.message(uri: uri))
+    }
+}
+```
+
+## Manual Prompt Registration
+
+```swift
+await server.withRequestHandler(ListPrompts.self) { _, _ in
+    ListPrompts.Result(prompts: [
+        Prompt(
+            name: "code-review",
+            description: "Review code for best practices",
+            arguments: [
+                .init(name: "language", description: "Programming language", required: true),
+                .init(name: "code", description: "Code to review", required: true)
+            ]
+        )
+    ])
+}
+
+await server.withRequestHandler(GetPrompt.self) { params, _ in
+    guard params.name == "code-review" else {
+        throw MCPError.invalidParams("Unknown prompt: \(params.name)")
+    }
+
+    let language = params.arguments?["language"] ?? "unknown"
+    let code = params.arguments?["code"] ?? ""
+
+    return GetPrompt.Result(
+        description: "Code review for \(language)",
+        messages: [
+            .user("Please review this \(language) code:\n\n```\(language)\n\(code)\n```")
+        ]
+    )
+}
+```
+
+## Mixing High-Level and Low-Level
+
+For HTTP servers, you can add custom handlers to session instances created via `createSession()`:
+
+```swift
+let mcpServer = MCPServer(name: "MyServer", version: "1.0.0")
+
+// High-level tool registration (shared across all sessions)
+try await mcpServer.register(MyTool.self)
+
+// Create a session and add custom handlers
+let session = await mcpServer.createSession()
+await session.withRequestHandler(CustomMethod.self) { params, context in
+    // Custom handling
+}
+
+// Start with transport
+try await session.start(transport: transport)
+```
+
+For stdio servers, use the low-level ``Server`` directly if you need custom handlers:
 
 ## Request Handler Context
 
-Every request handler receives a ``Server/RequestHandlerContext`` that provides request-scoped capabilities:
+Every request handler receives a context with request-scoped capabilities:
 
 ```swift
 await server.withRequestHandler(CallTool.self) { params, context in
     // Request identification
     print("Request ID: \(context.requestId)")
 
-    // Request metadata (includes progress token)
+    // Progress token for long operations
     if let meta = context._meta {
         print("Progress token: \(meta.progressToken)")
     }
 
-    // Session ID (for HTTP transports with multiple clients)
+    // Session ID (HTTP transport with multiple clients)
     if let sessionId = context.sessionId {
         print("Session: \(sessionId)")
     }
@@ -35,22 +218,8 @@ Report progress during long-running operations:
 
 ```swift
 await server.withRequestHandler(CallTool.self) { params, context in
-    guard params.name == "process-data" else { ... }
-
-    // Get the progress token from the request
     let progressToken = context._meta?.progressToken
 
-    // Report initial progress
-    if let token = progressToken {
-        try await context.sendProgress(
-            token: token,
-            progress: 0,
-            total: 100,
-            message: "Starting..."
-        )
-    }
-
-    // Process in chunks
     for i in 1...10 {
         await processChunk(i)
 
@@ -64,24 +233,11 @@ await server.withRequestHandler(CallTool.self) { params, context in
         }
     }
 
-    return CallTool.Result(content: [.text("Processing complete")])
+    return CallTool.Result(content: [.text("Complete")])
 }
 ```
 
 ## Sending Notifications
-
-The context provides methods for sending various notifications:
-
-### Progress
-
-```swift
-try await context.sendProgress(
-    token: token,
-    progress: 50,
-    total: 100,
-    message: "Halfway done"
-)
-```
 
 ### Log Messages
 
@@ -91,34 +247,23 @@ try await context.sendLogMessage(
     logger: "my-tool",
     data: "Processing started"
 )
-
-try await context.sendLogMessage(
-    level: .warning,
-    logger: "my-tool",
-    data: .object(["message": "Rate limit approaching", "remaining": 10])
-)
 ```
 
-### Resource Changes
-
-```swift
-// Resource list changed (new/removed resources)
-try await context.sendResourceListChanged()
-
-// Specific resource updated
-try await context.sendResourceUpdated(uri: "config://app")
-```
-
-### Tool/Prompt Changes
+### List Changes
 
 ```swift
 try await context.sendToolListChanged()
+try await context.sendResourceListChanged()
 try await context.sendPromptListChanged()
 ```
 
-## Handling Cancellation
+### Resource Updates
 
-Check if the request has been cancelled:
+```swift
+try await context.sendResourceUpdated(uri: "config://app")
+```
+
+## Handling Cancellation
 
 ```swift
 await server.withRequestHandler(CallTool.self) { params, context in
@@ -141,56 +286,66 @@ await server.withRequestHandler(CallTool.self) { params, context in
 }
 ```
 
-## Logging
-
-Servers can send log messages to clients and handle log level changes.
+## Logging Capability
 
 Handle log level changes from clients:
 
 ```swift
-// The server automatically handles SetLoggingLevel requests
-// if you declared logging capability
 let server = Server(
     name: "MyServer",
     version: "1.0.0",
     capabilities: Server.Capabilities(logging: .init())
 )
+
+// Server automatically handles SetLoggingLevel requests
 ```
 
-## Graceful Shutdown
-
-Stop the server cleanly:
+## Starting and Stopping
 
 ```swift
-// Capture server reference
-let server = Server(name: "MyServer", version: "1.0.0")
+// Create transport
+let transport = StdioTransport(
+    input: FileDescriptor.standardInput,
+    output: FileDescriptor.standardOutput
+)
 
-// Set up signal handler
-signal(SIGINT) { _ in
-    Task {
-        await server.stop()
-    }
+// Start with optional initialize hook
+try await server.start(transport: transport) { clientInfo, clientCapabilities in
+    print("Client connected: \(clientInfo.name)")
 }
 
-// Start server
-try await server.start(transport: transport)
+// Wait for completion
 await server.waitUntilCompleted()
+
+// Or stop manually
+await server.stop()
 ```
 
-Stopping the server:
-1. Cancels all in-flight request handlers
-2. Cancels the message processing task
-3. Disconnects the transport
+## Configuration Options
+
+```swift
+// Strict mode (default) - requires initialize before other requests
+let strictServer = Server(
+    name: "Strict",
+    version: "1.0.0",
+    configuration: .default
+)
+
+// Lenient mode - allows requests before initialization
+let lenientServer = Server(
+    name: "Lenient",
+    version: "1.0.0",
+    configuration: .lenient
+)
+```
 
 ## HTTP Transport Considerations
 
 When using HTTP transport with multiple concurrent clients:
 
-### Session Identification
-
 ```swift
 await server.withRequestHandler(CallTool.self) { params, context in
-    // Each HTTP client gets a unique session ID
+    // Session ID for client identification
     if let sessionId = context.sessionId {
         print("Request from session: \(sessionId)")
     }
@@ -204,17 +359,26 @@ await server.withRequestHandler(CallTool.self) { params, context in
 }
 ```
 
-### Request Information
+## Graceful Shutdown
 
 ```swift
-if let requestInfo = context.requestInfo {
-    // Access HTTP headers and other request details
+let server = Server(name: "MyServer", version: "1.0.0")
+
+// Signal handler for clean shutdown
+signal(SIGINT) { _ in
+    Task { await server.stop() }
 }
+
+try await server.start(transport: transport)
+await server.waitUntilCompleted()
 ```
 
 ## See Also
 
 - <doc:server-setup>
 - <doc:server-tools>
+- <doc:server-resources>
+- <doc:server-prompts>
 - ``Server``
+- ``MCPServer``
 - ``Server/RequestHandlerContext``

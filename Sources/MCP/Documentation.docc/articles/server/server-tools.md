@@ -1,10 +1,14 @@
 # Tools
 
-Register tools that clients can discover and call
+Register tools that clients can discover and call.
 
 ## Overview
 
 Tools are functions that your server exposes to clients. Each tool has a name, description, and input schema. Clients can list available tools and call them with arguments.
+
+The Swift SDK provides two approaches:
+- **`@Tool` macro**: Define tools as Swift types with automatic schema generation (recommended)
+- **Closure-based**: Register tools dynamically at runtime
 
 ## Tool Naming
 
@@ -16,146 +20,385 @@ Tool names should follow these conventions:
 
 Examples: `getUser`, `DATA_EXPORT_v2`, `admin.tools.list`
 
-## Registering Tools
+## Defining Tools
 
-Register handlers for listing and calling tools:
+The `@Tool` macro generates JSON Schema from Swift types and handles argument parsing automatically:
 
 ```swift
-// List available tools
-await server.withRequestHandler(ListTools.self) { _, _ in
-    ListTools.Result(tools: [
-        Tool(
-            name: "weather",
-            description: "Get current weather for a location",
-            inputSchema: [
-                "type": "object",
-                "properties": [
-                    "location": ["type": "string", "description": "City name"],
-                    "units": ["type": "string", "enum": ["metric", "imperial"]]
-                ],
-                "required": ["location"]
-            ]
-        )
-    ])
-}
+@Tool
+struct GetWeather {
+    static let name = "get_weather"
+    static let description = "Get current weather for a location"
 
-// Handle tool calls
-await server.withRequestHandler(CallTool.self) { params, _ in
-    switch params.name {
-    case "weather":
-        let location = params.arguments?["location"]?.stringValue ?? "Unknown"
-        let weather = await getWeather(location: location)
-        return CallTool.Result(content: [.text("Weather in \(location): \(weather)")])
+    @Parameter(description: "City name")
+    var location: String
 
-    default:
-        return CallTool.Result(content: [.text("Unknown tool")], isError: true)
+    @Parameter(description: "Temperature units", default: "metric")
+    var units: String
+
+    func perform(context: HandlerContext) async throws -> String {
+        let weather = await fetchWeather(location: location, units: units)
+        return "Weather in \(location): \(weather.temperature)° \(weather.conditions)"
     }
 }
 ```
 
-## Tool Input Schema
+### Parameter Options
 
-Define expected parameters using JSON Schema:
+Use `@Parameter` to customize how arguments are parsed:
 
 ```swift
-Tool(
-    name: "search",
-    description: "Search documents",
+@Tool
+struct Search {
+    static let name = "search"
+    static let description = "Search documents"
+
+    @Parameter(description: "Search query")
+    var query: String
+
+    @Parameter(description: "Maximum results", default: 10)
+    var limit: Int
+
+    @Parameter(description: "Include archived", default: false)
+    var includeArchived: Bool
+
+    func perform(context: HandlerContext) async throws -> String {
+        // ...
+    }
+}
+```
+
+### Supported Parameter Types
+
+Built-in parameter types include:
+
+- **Basic types**: `String`, `Int`, `Double`, `Bool`
+- **Date**: Parsed from ISO 8601 strings
+- **Data**: Parsed from base64-encoded strings
+- **Optional**: `T?` where T is any supported type
+- **Array**: `[T]` where T is any supported type
+- **Dictionary**: `[String: T]` where T is any supported type
+- **Enums**: String enums conforming to ``ToolEnum``
+
+### Optional Parameters
+
+Optional parameters don't require a default value:
+
+```swift
+@Parameter(description: "Filter by category")
+var category: String?
+```
+
+### Validation Constraints
+
+Add validation constraints for strings and numbers:
+
+```swift
+@Tool
+struct CreateEvent {
+    static let name = "create_event"
+    static let description = "Create a calendar event"
+
+    // String length constraints
+    @Parameter(description: "Event title", minLength: 1, maxLength: 200)
+    var title: String
+
+    // Numeric range constraints
+    @Parameter(description: "Duration in minutes", minimum: 15, maximum: 480)
+    var duration: Int
+
+    // Combine with default values
+    @Parameter(description: "Priority (1-5)", minimum: 1, maximum: 5, default: 3)
+    var priority: Int
+
+    func perform(context: HandlerContext) async throws -> String {
+        // ...
+    }
+}
+```
+
+### Custom JSON Keys
+
+Use `key` to specify a different name in the JSON schema:
+
+```swift
+@Tool
+struct CreateUser {
+    static let name = "create_user"
+    static let description = "Create a new user"
+
+    // Maps to "first_name" in JSON, but uses Swift naming in code
+    @Parameter(key: "first_name", description: "User's first name")
+    var firstName: String
+
+    @Parameter(key: "last_name", description: "User's last name")
+    var lastName: String
+
+    func perform(context: HandlerContext) async throws -> String {
+        "Created user: \(firstName) \(lastName)"
+    }
+}
+```
+
+### Date Parameters
+
+Dates are parsed from ISO 8601 format strings:
+
+```swift
+@Tool
+struct ScheduleMeeting {
+    static let name = "schedule_meeting"
+    static let description = "Schedule a meeting"
+
+    @Parameter(description: "Meeting start time (ISO 8601)")
+    var startTime: Date
+
+    @Parameter(description: "Meeting end time (ISO 8601)")
+    var endTime: Date?
+
+    func perform(context: HandlerContext) async throws -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return "Meeting scheduled for \(formatter.string(from: startTime))"
+    }
+}
+```
+
+### Array Parameters
+
+Use arrays for parameters that accept multiple values:
+
+```swift
+@Tool
+struct SendNotifications {
+    static let name = "send_notifications"
+    static let description = "Send notifications to users"
+
+    @Parameter(description: "User IDs to notify")
+    var userIds: [String]
+
+    @Parameter(description: "Priority levels", default: [1, 2, 3])
+    var priorities: [Int]
+
+    func perform(context: HandlerContext) async throws -> String {
+        "Sent notifications to \(userIds.count) users"
+    }
+}
+```
+
+### Enum Parameters
+
+Use ``ToolEnum`` for string enums with automatic schema generation:
+
+```swift
+// ToolEnum requires RawRepresentable with String and CaseIterable
+// Swift auto-synthesizes both for simple enums
+enum Priority: String, ToolEnum {
+    case low, medium, high, urgent
+}
+
+enum OutputFormat: String, ToolEnum {
+    case json, xml, csv, yaml
+}
+
+@Tool
+struct ExportData {
+    static let name = "export_data"
+    static let description = "Export data in the specified format"
+
+    @Parameter(description: "Data to export")
+    var data: String
+
+    @Parameter(description: "Output format")
+    var format: OutputFormat
+
+    @Parameter(description: "Priority level")
+    var priority: Priority?
+
+    func perform(context: HandlerContext) async throws -> String {
+        "Exported data as \(format.rawValue)"
+    }
+}
+```
+
+The generated JSON Schema includes an `enum` constraint with all valid values.
+
+### Dictionary Parameters
+
+Use dictionaries for flexible key-value data:
+
+```swift
+@Tool
+struct SetMetadata {
+    static let name = "set_metadata"
+    static let description = "Set metadata key-value pairs"
+
+    @Parameter(description: "Resource ID")
+    var resourceId: String
+
+    @Parameter(description: "Metadata to set")
+    var metadata: [String: String]
+
+    @Parameter(description: "Numeric settings")
+    var settings: [String: Int]?
+
+    func perform(context: HandlerContext) async throws -> String {
+        "Set \(metadata.count) metadata entries on \(resourceId)"
+    }
+}
+```
+
+## Registering Tools
+
+Use ``MCPServer`` to register tools:
+
+```swift
+let server = MCPServer(name: "MyServer", version: "1.0.0")
+
+// Register multiple tools with result builder
+try await server.register {
+    GetWeather.self
+    Search.self
+}
+
+// Or register individually
+try await server.register(GetWeather.self)
+```
+
+## Dynamic Tool Registration
+
+For tools defined at runtime (from configuration, database, etc.), use closure-based registration:
+
+```swift
+let tool = try await server.register(
+    name: "echo",
+    description: "Echo the input message",
     inputSchema: [
         "type": "object",
         "properties": [
-            "query": [
-                "type": "string",
-                "description": "Search query"
-            ],
-            "limit": [
-                "type": "integer",
-                "description": "Maximum results",
-                "default": 10
-            ]
+            "message": ["type": "string", "description": "Message to echo"]
         ],
-        "required": ["query"]
+        "required": ["message"]
     ]
-)
+) { (args: EchoArgs, context: HandlerContext) in
+    "Echo: \(args.message)"
+}
 ```
+
+For tools with no input:
+
+```swift
+let tool = try await server.register(
+    name: "get_time",
+    description: "Get current server time"
+) { (context: HandlerContext) in
+    ISO8601DateFormatter().string(from: Date())
+}
+```
+
+## Tool Lifecycle
+
+Registered tools return a handle for lifecycle management:
+
+```swift
+let tool = try await server.register(GetWeather.self)
+
+// Temporarily hide from clients
+await tool.disable()
+
+// Make available again
+await tool.enable()
+
+// Permanently remove
+await tool.remove()
+```
+
+Disabled tools don't appear in `listTools` responses and reject execution attempts.
 
 ## Tool Annotations
 
 Provide hints about tool behavior to help clients make decisions:
 
 ```swift
-Tool(
-    name: "delete_file",
-    description: "Delete a file from the filesystem",
-    inputSchema: [...],
-    annotations: .init(
-        title: "Delete File",       // Human-readable title
-        destructiveHint: true,      // May cause irreversible changes
-        idempotentHint: false,      // Different results on repeated calls
-        readOnlyHint: false,        // Modifies state
-        openWorldHint: false        // Only accesses specified resources
-    )
-)
+@Tool
+struct DeleteFile {
+    static let name = "delete_file"
+    static let description = "Delete a file permanently"
+    static let annotations: [AnnotationOption] = [
+        .title("Delete File"),
+        .idempotent
+    ]
+    // Note: destructive is the implicit MCP default when .readOnly is not set
+
+    @Parameter(description: "Path to delete")
+    var path: String
+
+    func perform(context: HandlerContext) async throws -> String {
+        // ...
+    }
+}
 ```
 
-### Annotation Meanings
-
-- **title**: Human-readable name for UI display
-- **readOnlyHint**: Tool only reads data, doesn't modify anything
-- **destructiveHint**: Tool may cause irreversible changes
-- **idempotentHint**: Calling multiple times has same effect as once
-- **openWorldHint**: Tool may access resources beyond its inputs
-
-## Tool Icons
-
-Add visual representation for UI display:
+Or for dynamic tools:
 
 ```swift
-Tool(
-    name: "search",
-    description: "Search the web",
+try await server.register(
+    name: "delete_file",
+    description: "Delete a file",
     inputSchema: [...],
-    icons: [
-        Icon(src: "https://example.com/search-icon.png", mimeType: "image/png")
-    ]
-)
+    annotations: [.title("Delete File"), .idempotent]
+) { (args: DeleteArgs, context: HandlerContext) in
+    // ...
+}
 ```
+
+### Available Annotations
+
+- **`.title(String)`**: Human-readable name for UI display
+- **`.readOnly`**: Tool only reads data (implies non-destructive and idempotent)
+- **`.idempotent`**: Calling multiple times has same effect as once
+- **`.closedWorld`**: Tool does not interact with external systems
+
+When the annotations array is empty (the default), MCP implicit defaults apply:
+- `readOnlyHint: false` — tool may modify state
+- `destructiveHint: true` — tool may destroy data
+- `idempotentHint: false` — repeated calls may have different effects
+- `openWorldHint: true` — tool interacts with external systems
 
 ## Response Content Types
 
-Tool results support multiple content types:
+Tool results support multiple content types. Return a `String` for simple text, or use ``ToolOutput`` conforming types for rich content.
 
 ### Text
 
 ```swift
-CallTool.Result(content: [.text("Hello, world!")])
-```
-
-### Images
-
-```swift
-let imageData = // base64-encoded image data
-CallTool.Result(content: [
-    .image(data: imageData, mimeType: "image/png")
-])
-```
-
-### Audio
-
-```swift
-let audioData = // base64-encoded audio data
-CallTool.Result(content: [
-    .audio(data: audioData, mimeType: "audio/mp3")
-])
+func perform(context: HandlerContext) async throws -> String {
+    "Hello, world!"
+}
 ```
 
 ### Multiple Content Items
 
+Return `CallTool.Result` for complex responses:
+
 ```swift
-CallTool.Result(content: [
-    .text("Here's the chart:"),
-    .image(data: chartData, mimeType: "image/png")
-])
+func perform(context: HandlerContext) async throws -> CallTool.Result {
+    CallTool.Result(content: [
+        .text("Here's the chart:"),
+        .image(data: chartData, mimeType: "image/png")
+    ])
+}
+```
+
+### Images and Audio
+
+```swift
+// Image
+CallTool.Result(content: [.image(data: base64Data, mimeType: "image/png")])
+
+// Audio
+CallTool.Result(content: [.audio(data: base64Data, mimeType: "audio/mp3")])
 ```
 
 ## Error Handling
@@ -164,84 +407,78 @@ MCP distinguishes between two types of errors:
 
 ### Protocol Errors
 
-Use ``MCPError`` for issues with the request itself:
-- Unknown tool name
-- Malformed request structure
-- Server internal errors
+Throw ``MCPError`` for issues with the request itself (unknown tool, malformed request). The SDK handles this automatically for registered tools.
+
+### Tool Execution Errors
+
+Return `isError: true` for errors during execution that the model might recover from:
 
 ```swift
-await server.withRequestHandler(CallTool.self) { params, _ in
-    guard knownTools.contains(params.name) else {
-        throw MCPError.invalidParams("Unknown tool: \(params.name)")
+func perform(context: HandlerContext) async throws -> CallTool.Result {
+    guard isValidDate(date) else {
+        return CallTool.Result(
+            content: [.text("Invalid date: must be in the future")],
+            isError: true
+        )
     }
     // ...
 }
 ```
 
-### Tool Execution Errors
-
-Use `isError: true` for errors during tool execution that the model might be able to recover from:
-- API failures
-- Input validation errors (wrong format, out of range)
-- Business logic errors
-
-```swift
-CallTool.Result(
-    content: [.text("Invalid date: must be in the future")],
-    isError: true
-)
-```
-
-Tool execution errors provide actionable feedback that language models can use to self-correct and retry with adjusted parameters.
+Tool execution errors provide actionable feedback that language models can use to self-correct and retry.
 
 ## Output Schema and Structured Content
 
-Tools can define an output schema for validated structured results:
+For validated structured results, use `@OutputSchema` to generate a schema from a Swift type:
 
 ```swift
-Tool(
-    name: "get_weather",
-    description: "Get weather data",
-    inputSchema: [...],
-    outputSchema: [
-        "type": "object",
-        "properties": [
-            "temperature": ["type": "number"],
-            "conditions": ["type": "string"]
-        ],
-        "required": ["temperature", "conditions"]
-    ]
-)
-```
+@OutputSchema
+struct WeatherData: Sendable {
+    let temperature: Double
+    let conditions: String
+    let humidity: Int?
+}
 
-Return structured content alongside human-readable text:
+@Tool
+struct GetWeather {
+    static let name = "get_weather"
+    static let description = "Get weather data"
 
-```swift
-await server.withRequestHandler(CallTool.self) { params, _ in
-    let data: [String: Value] = [
-        "temperature": 22.5,
-        "conditions": "Partly cloudy"
-    ]
+    @Parameter(description: "City name")
+    var location: String
 
-    return CallTool.Result(
-        content: [.text("Temperature: 22.5°C, Partly cloudy")],
-        structuredContent: .object(data)
-    )
+    func perform(context: HandlerContext) async throws -> WeatherData {
+        WeatherData(
+            temperature: 22.5,
+            conditions: "Partly cloudy",
+            humidity: 65
+        )
+    }
 }
 ```
 
+Types conforming to `StructuredOutput` (via `@OutputSchema`) automatically:
+- Include `outputSchema` in the tool definition
+- Serialize to both human-readable text and structured JSON content
+
 ## Notifying Tool Changes
 
-If your server declared `tools.listChanged` capability, notify clients when tools change:
+``MCPServer`` automatically sends list change notifications when tools are registered, enabled, disabled, or removed. You can also send manually:
 
 ```swift
-// After adding/removing tools
-try await context.sendToolListChanged()
+await server.sendToolListChanged()
 ```
+
+## Low-Level API
+
+For advanced use cases like custom request handling or mixing with other handlers, see <doc:server-advanced> for the manual `withRequestHandler` approach.
 
 ## See Also
 
 - <doc:server-setup>
 - <doc:client-tools>
-- ``Server``
+- ``MCPServer``
 - ``Tool``
+- ``ToolSpec``
+- ``Parameter``
+- ``ToolEnum``

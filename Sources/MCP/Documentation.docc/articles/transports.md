@@ -210,9 +210,25 @@ func extractHeaders(from request: Hummingbird.Request) -> [String: String] {
 
 See the [integration examples](https://github.com/DePasqualeOrg/mcp-swift-sdk/tree/main/Examples) for complete examples.
 
+## BasicHTTPSessionManager
+
+For simple demos and testing, ``BasicHTTPSessionManager`` handles session lifecycle automatically:
+
+```swift
+let mcpServer = MCPServer(name: "my-server", version: "1.0.0")
+try await mcpServer.register { Echo.self }
+
+let sessionManager = BasicHTTPSessionManager(server: mcpServer, port: 8080)
+
+// In your HTTP route:
+let response = await sessionManager.handleRequest(httpRequest)
+```
+
+See ``BasicHTTPSessionManager`` for limitations and when to implement custom session management.
+
 ## SessionManager
 
-Thread-safe session storage for HTTP servers:
+Lower-level thread-safe session storage for custom HTTP server implementations:
 
 ```swift
 let sessionManager = SessionManager(maxSessions: 100)

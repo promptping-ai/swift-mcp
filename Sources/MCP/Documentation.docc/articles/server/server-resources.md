@@ -1,6 +1,6 @@
 # Resources
 
-Register resources that clients can read and subscribe to
+Register resources that clients can read and subscribe to.
 
 ## Overview
 
@@ -8,226 +8,190 @@ Resources represent data that your server exposes to clients. Each resource has 
 
 ## Registering Resources
 
-Register handlers for listing and reading resources:
+Use ``MCPServer`` to register resources with a closure that returns the content:
 
 ```swift
-// List available resources
-await server.withRequestHandler(ListResources.self) { _, _ in
-    ListResources.Result(resources: [
-        Resource(
-            name: "Configuration",
-            uri: "config://app",
-            description: "Application configuration",
-            mimeType: "application/json"
-        ),
-        Resource(
-            name: "Logs",
-            uri: "logs://app/recent",
-            description: "Recent application logs"
-        )
-    ])
-}
+let server = MCPServer(name: "MyServer", version: "1.0.0")
 
-// Read resource content
-await server.withRequestHandler(ReadResource.self) { params, _ in
-    switch params.uri {
-    case "config://app":
-        let config = loadConfiguration()
-        return ReadResource.Result(contents: [
-            .text(config.jsonString, uri: params.uri, mimeType: "application/json")
-        ])
-
-    default:
-        throw MCPError.resourceNotFound(uri: params.uri)
-    }
+let resource = try await server.registerResource(
+    uri: "config://app",
+    name: "Configuration",
+    description: "Application configuration",
+    mimeType: "application/json"
+) {
+    let config = loadConfiguration()
+    return .text(config.jsonString, uri: "config://app", mimeType: "application/json")
 }
 ```
+
+The closure is called each time a client reads the resource, so content is always fresh.
 
 ## Resource Content Types
 
 ### Text Content
 
 ```swift
-ReadResource.Result(contents: [
-    .text(
-        "file contents here",
-        uri: "file:///path/to/file.txt",
-        mimeType: "text/plain"
-    )
-])
+try await server.registerResource(
+    uri: "logs://recent",
+    name: "Recent Logs"
+) {
+    .text(recentLogs, uri: "logs://recent", mimeType: "text/plain")
+}
 ```
 
 ### Binary Content
 
-For binary data, use base64 encoding:
-
 ```swift
-let imageData: Data = // binary data
-ReadResource.Result(contents: [
-    .binary(
-        imageData,
-        uri: "image:///chart.png",
-        mimeType: "image/png"
-    )
-])
+try await server.registerResource(
+    uri: "chart://sales",
+    name: "Sales Chart",
+    mimeType: "image/png"
+) {
+    let chartData = generateChart()
+    return .binary(chartData, uri: "chart://sales", mimeType: "image/png")
+}
 ```
 
-### Multiple Contents
+## File Resources
 
-A single resource can return multiple content items:
+For file-backed resources, you can register with a closure that reads the file:
 
 ```swift
-ReadResource.Result(contents: [
-    .text(summary, uri: params.uri, mimeType: "text/plain"),
-    .text(details, uri: "\(params.uri)/details", mimeType: "application/json")
-])
+try await server.registerResource(
+    uri: "file:///etc/config.json",
+    name: "config.json",
+    mimeType: "application/json"
+) {
+    let data = try Data(contentsOf: URL(fileURLWithPath: "/etc/config.json"))
+    let content = String(data: data, encoding: .utf8) ?? ""
+    return .text(content, uri: "file:///etc/config.json", mimeType: "application/json")
+}
 ```
+
+For lower-level file handling with automatic MIME type inference, use ``FileResource`` via the resource registry. See <doc:server-advanced>.
+
+## Resource Templates
+
+For dynamic resources where the URI contains variables, register a template:
+
+```swift
+let template = try await server.registerResourceTemplate(
+    uriTemplate: "user://{userId}/profile",
+    name: "User Profile",
+    description: "User profile data"
+) { uri, variables in
+    let userId = variables["userId"]!
+    let profile = await loadUserProfile(userId)
+    return .text(profile.json, uri: uri, mimeType: "application/json")
+}
+```
+
+Clients see the template in `listResourceTemplates` and substitute variables to construct URIs for reading.
+
+### Template Variables
+
+Template URIs use `{variableName}` placeholders that are extracted when matching:
+
+```swift
+// Template: "file:///{path}"
+// URI: "file:///documents/report.pdf"
+// variables["path"] == "documents/report.pdf"
+```
+
+## Resource Lifecycle
+
+Registered resources return a handle for lifecycle management:
+
+```swift
+let resource = try await server.registerResource(...)
+
+// Temporarily hide from clients
+await resource.disable()
+
+// Make available again
+await resource.enable()
+
+// Permanently remove
+await resource.remove()
+```
+
+Disabled resources don't appear in `listResources` responses and reject read attempts.
 
 ## Resource Metadata
 
 Resources support optional metadata:
 
 ```swift
-Resource(
-    name: "report.pdf",
+try await server.registerResource(
     uri: "file:///docs/report.pdf",
-    description: "Monthly report",
-    mimeType: "application/pdf",
-    size: 1048576,  // Size in bytes (1 MB)
-    icons: [
-        Icon(src: "https://example.com/pdf-icon.png", mimeType: "image/png")
-    ]
-)
+    name: "Monthly Report",
+    description: "Monthly sales report",
+    mimeType: "application/pdf"
+) { ... }
 ```
-
-The `size` field helps clients display file sizes or make decisions about downloading large resources.
 
 ## Resource Annotations
 
-Resources and content blocks support optional annotations that help clients understand how to use them:
+Resources can include annotations to indicate audience (`user`, `assistant`, or both), priority (0.0 to 1.0), and last modified timestamp. For setting annotations, use the low-level API with the ``Resource`` type directly. See <doc:server-advanced>.
 
-- **audience**: Who should see this resource (`["user"]`, `["assistant"]`, or `["user", "assistant"]`)
-- **priority**: Importance from 0.0 (optional) to 1.0 (required)
-- **lastModified**: ISO 8601 timestamp of last modification
+## Notifying Changes
 
-```swift
-Resource(
-    name: "README",
-    uri: "file:///project/README.md",
-    mimeType: "text/markdown",
-    annotations: .init(
-        audience: [.user],
-        priority: 0.8,
-        lastModified: "2025-01-09T12:00:00Z"
-    )
-)
-```
-
-Clients can use annotations to filter resources, prioritize context inclusion, or display modification times.
-
-## Resource Templates
-
-Expose dynamic resources with URI templates:
-
-```swift
-await server.withRequestHandler(ListResourceTemplates.self) { _, _ in
-    ListResourceTemplates.Result(templates: [
-        Resource.Template(
-            uriTemplate: "file:///{path}",
-            name: "File",
-            description: "Access files by path"
-        ),
-        Resource.Template(
-            uriTemplate: "user://{userId}/profile",
-            name: "User Profile",
-            description: "User profile data"
-        )
-    ])
-}
-```
-
-Clients substitute template variables to construct URIs for `ReadResource`.
-
-## Resource Subscriptions
-
-If you declared `resources.subscribe` capability, handle subscription requests:
-
-```swift
-var subscriptions: Set<String> = []
-
-await server.withRequestHandler(ResourceSubscribe.self) { params, _ in
-    subscriptions.insert(params.uri)
-    return ResourceSubscribe.Result()
-}
-
-await server.withRequestHandler(ResourceUnsubscribe.self) { params, _ in
-    subscriptions.remove(params.uri)
-    return ResourceUnsubscribe.Result()
-}
-```
-
-### Notifying Subscribers
-
-When a resource changes, notify subscribed clients:
-
-```swift
-// Resource content changed
-try await context.sendResourceUpdated(uri: "config://app")
-```
-
-### Notifying List Changes
-
-If you declared `resources.listChanged` capability, notify when resources are added or removed:
+``MCPServer`` automatically sends list change notifications when resources are registered, enabled, disabled, or removed. You can also send manually:
 
 ```swift
 // Resource list changed
-try await context.sendResourceListChanged()
+await server.sendResourceListChanged()
 ```
+
+## Resource Subscriptions
+
+Resource subscriptions allow clients to be notified when content changes. This requires implementing subscription handlers on the low-level ``Server``. See <doc:server-advanced> for details.
 
 ## Complete Example
 
 ```swift
-let server = Server(
-    name: "FileServer",
-    version: "1.0.0",
-    capabilities: Server.Capabilities(
-        resources: .init(subscribe: true, listChanged: true)
-    )
-)
+let server = MCPServer(name: "FileServer", version: "1.0.0")
 
-var watchedFiles: Set<String> = []
-
-await server.withRequestHandler(ListResources.self) { _, _ in
-    let files = listDirectory("/data")
-    return ListResources.Result(resources: files.map { file in
-        Resource(
-            name: file.name,
-            uri: "file:///data/\(file.name)",
-            mimeType: file.mimeType
-        )
-    })
+// Static configuration resource
+try await server.registerResource(
+    uri: "config://app",
+    name: "App Config",
+    mimeType: "application/json"
+) {
+    .text(appConfig.json, uri: "config://app", mimeType: "application/json")
 }
 
-await server.withRequestHandler(ReadResource.self) { params, _ in
-    guard params.uri.hasPrefix("file:///data/") else {
-        throw MCPError.resourceNotFound(uri: params.uri)
-    }
-    let path = String(params.uri.dropFirst("file://".count))
-    let content = try readFile(path)
-    return ReadResource.Result(contents: [
-        .text(content, uri: params.uri)
-    ])
+// File-backed resource
+try await server.registerResource(
+    uri: "file:///project/README.md",
+    name: "README",
+    mimeType: "text/markdown"
+) {
+    let content = try String(contentsOfFile: "/project/README.md")
+    return .text(content, uri: "file:///project/README.md", mimeType: "text/markdown")
 }
 
-await server.withRequestHandler(ResourceSubscribe.self) { params, _ in
-    watchedFiles.insert(params.uri)
-    return ResourceSubscribe.Result()
+// Dynamic user data via template
+try await server.registerResourceTemplate(
+    uriTemplate: "user://{userId}/settings",
+    name: "User Settings"
+) { uri, variables in
+    let settings = await loadSettings(for: variables["userId"]!)
+    return .text(settings.json, uri: uri)
 }
+
+// Connect and run
+try await server.run(transport: .stdio)
 ```
+
+## Low-Level API
+
+For advanced use cases like resource subscriptions or custom request handling, see <doc:server-advanced> for the manual `withRequestHandler` approach.
 
 ## See Also
 
 - <doc:server-setup>
 - <doc:client-resources>
-- ``Server``
+- ``MCPServer``
 - ``Resource``
+- ``FileResource``

@@ -194,6 +194,28 @@ In stateless mode:
 - Each request is independent
 - Server-initiated notifications are not supported (no GET endpoint)
 
+## Security
+
+### DNS Rebinding Protection
+
+Both examples use `.forBindAddress()`, which automatically enables DNS rebinding protection for localhost. This prevents malicious websites from accessing your local MCP server through DNS rebinding attacks.
+
+- **Localhost** (`127.0.0.1`, `localhost`, `::1`): Protection enabled automatically
+- **Other addresses** (`0.0.0.0`): Protection disabled (not applicable to network-exposed servers)
+
+For cloud deployments, you can explicitly disable protection:
+
+```swift
+let transport = HTTPServerTransport(
+    options: .init(
+        sessionIdGenerator: { UUID().uuidString },
+        dnsRebindingProtection: .none
+    )
+)
+```
+
+See the [Transports documentation](../Sources/MCP/Documentation.docc/articles/transports.md) for details on Host header handling with different frameworks.
+
 ## Production Considerations
 
 1. **Session cleanup**: Implement periodic cleanup of stale sessions
