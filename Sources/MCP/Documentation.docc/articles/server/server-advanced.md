@@ -36,7 +36,9 @@ Unlike ``MCPServer``, you must declare capabilities upfront.
 
 ## Manual Tool Registration
 
-Register handlers for listing and calling tools:
+Register handlers for listing and calling tools.
+
+> Note: When using the low-level API, input validation is not automatic. If you need schema validation, you must implement it yourself in your `CallTool` handler. For automatic validation, use ``MCPServer`` instead.
 
 ```swift
 await server.withRequestHandler(ListTools.self) { _, _ in

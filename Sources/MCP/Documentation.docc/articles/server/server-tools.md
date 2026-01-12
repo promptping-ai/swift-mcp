@@ -91,7 +91,7 @@ var category: String?
 
 ### Validation Constraints
 
-Add validation constraints for strings and numbers:
+Add validation constraints for strings and numbers. When using ``MCPServer``, these constraints are automatically enforced at runtime—invalid arguments are rejected with an error before your tool's `perform` method is called:
 
 ```swift
 @Tool

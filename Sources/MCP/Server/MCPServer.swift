@@ -94,6 +94,9 @@ public actor MCPServer {
     /// Whether any prompts have been registered.
     private var hasPrompts = false
 
+    /// JSON Schema validator for tool input/output validation.
+    private let validator: JSONSchemaValidator = DefaultJSONSchemaValidator()
+
     /// Creates a new MCPServer.
     ///
     /// - Parameters:
@@ -201,16 +204,41 @@ public actor MCPServer {
             return ListTools.Result(tools: tools)
         }
 
-        _ = await session.withRequestHandler(CallTool.self) { [toolRegistry] request, handlerContext in
+        _ = await session.withRequestHandler(CallTool.self) { [toolRegistry, validator] request, handlerContext in
+            let name = request.name
+
+            // Get tool definition for validation
+            guard let toolDef = await toolRegistry.toolDefinition(for: name) else {
+                throw MCPError.invalidParams("Unknown tool: \(name)")
+            }
+
+            // Validate input against schema
+            let inputValue: Value = request.arguments.map { .object($0) } ?? .object([:])
+            try validator.validate(inputValue, against: toolDef.inputSchema)
+
+            // Execute
             let context = HandlerContext(
                 handlerContext: handlerContext,
                 progressToken: request._meta?.progressToken
             )
-            return try await toolRegistry.execute(
-                request.name,
+            let result = try await toolRegistry.execute(
+                name,
                 arguments: request.arguments,
                 context: context
             )
+
+            // Validate output against schema if present
+            if let outputSchema = toolDef.outputSchema {
+                if let structuredContent = result.structuredContent {
+                    try validator.validate(structuredContent, against: outputSchema)
+                } else if !(result.isError ?? false) {
+                    throw MCPError.invalidParams(
+                        "Tool '\(name)' has an output schema but no structured content was provided"
+                    )
+                }
+            }
+
+            return result
         }
 
         // Resources

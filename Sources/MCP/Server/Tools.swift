@@ -379,7 +379,7 @@ public enum CallTool: Method {
     public struct Parameters: Hashable, Codable, Sendable {
         public let name: String
         /// The arguments to pass to the tool.
-        /// When using `Server.withValidatedToolHandler()`, arguments are validated
+        /// When using `MCPServer`, arguments are automatically validated
         /// against the tool's `inputSchema` before the handler is called.
         public let arguments: [String: Value]?
         /// Task metadata for task-augmented requests.
@@ -409,7 +409,7 @@ public enum CallTool: Method {
         public let content: [Tool.Content]
         /// An optional JSON object that represents the structured result of the tool call.
         /// If the tool defined an `outputSchema`, this should conform to that schema.
-        /// When using `Server.withValidatedToolHandler()`, this is validated against
+        /// When using `MCPServer`, this is automatically validated against
         /// the tool's `outputSchema` after the handler returns.
         public let structuredContent: Value?
         /// Whether the tool call ended in an error.
