@@ -9,7 +9,6 @@ This repository, which builds on the [official](https://github.com/modelcontextp
 
 All of the functionality from protocol version 2025-11-25 has been implemented here, except for:
 
-- JSON schema validation
 - OAuth
 
 This repository also resolves [bugs and spec compliance issues](https://github.com/modelcontextprotocol/swift-sdk/pull/175#issuecomment-3718183682) in the official SDK.
