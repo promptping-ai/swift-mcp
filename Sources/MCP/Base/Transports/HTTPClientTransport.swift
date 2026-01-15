@@ -404,8 +404,8 @@ public actor HTTPClientTransport: Transport {
     /// Note: This implementation handles both success AND error responses, which aligns
     /// with Python SDK but is more complete than TypeScript SDK. TypeScript's streamableHttp.ts
     /// only checks `isJSONRPCResultResponse` (success only), missing error response handling.
-    /// TODO: File PR to fix TypeScript SDK - streamableHttp.ts line 364 should also handle
-    /// `isJSONRPCErrorResponse` for both `receivedResponse` flag and ID remapping.
+    /// TODO: Remove this note after this PR is merged:
+    /// https://github.com/modelcontextprotocol/typescript-sdk/pull/1390
     ///
     /// - Parameters:
     ///   - data: The raw JSON-RPC message data
