@@ -548,7 +548,7 @@ public actor ResourceRegistry {
             }
         }
 
-        throw MCPError.invalidParams("Unknown resource: \(uri)")
+        throw MCPError.resourceNotFound(uri: uri)
     }
 
     /// Checks if a resource exists.

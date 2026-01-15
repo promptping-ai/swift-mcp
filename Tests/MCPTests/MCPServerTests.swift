@@ -220,8 +220,12 @@ struct MCPServerTests {
         }
 
         // Try to read a different, non-existent resource
-        await #expect(throws: MCPError.self) {
+        // Per MCP spec, unknown resources should return error code -32002
+        do {
             _ = try await server.resourceRegistry.read(uri: "test://does-not-exist")
+            Issue.record("Expected resourceNotFound error")
+        } catch let error as MCPError {
+            #expect(error.code == ErrorCode.resourceNotFound)
         }
     }
 

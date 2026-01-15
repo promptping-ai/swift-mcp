@@ -723,7 +723,7 @@ struct ResourceTests {
                 ])
             }
 
-            throw MCPError.invalidParams("Unknown resource: \(uri)")
+            throw MCPError.resourceNotFound(uri: uri)
         }
 
         // Handler for listing resources (required for resources capability)
@@ -792,7 +792,7 @@ struct ResourceTests {
                     )
                 ])
             }
-            throw MCPError.invalidParams("Unknown resource")
+            throw MCPError.resourceNotFound(uri: params.uri)
         }
 
         try await server.start(transport: serverTransport)

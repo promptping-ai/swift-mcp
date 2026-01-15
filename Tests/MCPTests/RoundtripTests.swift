@@ -94,8 +94,7 @@ struct RoundtripTests {
 
         await server.withRequestHandler(ReadResource.self) { request, _ in
             guard request.uri == "test://example.txt" else {
-                return ReadResource.Result(contents: [.text("Resource not found", uri: request.uri)]
-                )
+                throw MCPError.resourceNotFound(uri: request.uri)
             }
             return ReadResource.Result(contents: [.text("Hello, World!", uri: request.uri)])
         }
