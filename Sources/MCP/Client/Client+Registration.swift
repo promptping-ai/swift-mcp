@@ -321,26 +321,6 @@ public extension Client {
         withRequestHandler(Elicit.self, handler: handler)
     }
 
-    /// Internal method to set a request handler box directly.
-    ///
-    /// This is used by task-augmented handlers that need to return different result types
-    /// based on whether the request has a `task` field.
-    ///
-    /// - Important: This is an internal API that may change without notice.
-    internal func _setRequestHandler(method: String, handler: ClientRequestHandlerBox) {
-        requestHandlers[method] = handler
-    }
-
-    /// Internal method to get an existing request handler box.
-    ///
-    /// This is used to retrieve the existing handler before wrapping it with
-    /// a task-aware handler that preserves the normal handler as a fallback.
-    ///
-    /// - Important: This is an internal API that may change without notice.
-    internal func _getRequestHandler(method: String) -> ClientRequestHandlerBox? {
-        requestHandlers[method]
-    }
-
     /// Internal method to set the task-augmented sampling handler.
     ///
     /// This handler is called when the server sends a `sampling/createMessage` request

@@ -12,10 +12,6 @@ extension Server {
         }
 
         var items: [Item]
-
-        init(items: [Item]) {
-            self.items = items
-        }
     }
 
     /// Process a batch of requests and/or notifications

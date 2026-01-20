@@ -856,12 +856,20 @@ public actor Server {
 
     /// Whether the server is initialized
     var isInitialized = false
-    /// The client information
-    var clientInfo: Client.Info?
-    /// The client capabilities
-    var clientCapabilities: Client.Capabilities?
-    /// The protocol version
-    var protocolVersion: String?
+    /// The client information received during initialization.
+    ///
+    /// Contains the client's name and version.
+    /// Returns `nil` if the server has not been initialized yet.
+    public private(set) var clientInfo: Client.Info?
+    /// The client capabilities received during initialization.
+    ///
+    /// Use this to check what capabilities the client supports.
+    /// Returns `nil` if the server has not been initialized yet.
+    public private(set) var clientCapabilities: Client.Capabilities?
+    /// The protocol version negotiated during initialization.
+    ///
+    /// Returns `nil` if the server has not been initialized yet.
+    public private(set) var protocolVersion: String?
     /// The list of subscriptions
     var subscriptions: [String: Set<RequestId>] = [:]
     /// The task for the message handling loop

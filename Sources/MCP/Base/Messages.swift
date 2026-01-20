@@ -295,17 +295,13 @@ typealias AnyResponse = Response<AnyMethod>
 
 extension AnyResponse {
     init(_ response: Response<some Method>) throws {
-        // Instead of re-encoding/decoding which might double-wrap the error,
-        // directly transfer the properties
         id = response.id
         switch response.result {
             case let .success(result):
-                // For success, we still need to convert the result to a Value
                 let data = try JSONEncoder().encode(result)
                 let resultValue = try JSONDecoder().decode(Value.self, from: data)
                 self.result = .success(resultValue)
             case let .failure(error):
-                // Keep the original error without re-encoding/decoding
                 result = .failure(error)
         }
     }
@@ -325,16 +321,6 @@ public protocol Notification: Hashable, Codable, Sendable {
 struct AnyNotification: Notification, Sendable {
     static var name: String { "" }
     typealias Parameters = Value
-}
-
-extension AnyNotification {
-    init(_ notification: some Notification) throws {
-        let encoder = JSONEncoder()
-        let decoder = JSONDecoder()
-
-        let data = try encoder.encode(notification)
-        self = try decoder.decode(AnyNotification.self, from: data)
-    }
 }
 
 /// Protocol for type-erased notification messages.

@@ -185,11 +185,6 @@ public actor BasicHTTPSessionManager {
         return await transport.handleRequest(request)
     }
 
-    /// Removes a session by ID.
-    private func removeSession(_ sessionId: String) {
-        sessions.removeValue(forKey: sessionId)
-    }
-
     /// Closes all active sessions.
     public func closeAll() async {
         for (_, session) in sessions {

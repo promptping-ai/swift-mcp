@@ -390,7 +390,9 @@ public actor Client {
     public private(set) var serverInfo: Server.Info?
 
     /// The protocol version negotiated during initialization.
-    private var protocolVersion: String?
+    ///
+    /// Returns `nil` if the client has not been initialized yet.
+    public private(set) var protocolVersion: String?
 
     /// Instructions from the server describing how to use its features.
     ///
