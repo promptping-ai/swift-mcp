@@ -451,7 +451,7 @@ extension ToolEnum {
     /// Uses the first case as the placeholder value.
     public static var placeholderValue: Self {
         guard let first = allCases.first else {
-            fatalError("ToolEnum requires at least one case")
+            fatalError("ToolEnum '\(Self.self)' must have at least one case")
         }
         return first
     }

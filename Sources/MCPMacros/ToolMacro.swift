@@ -114,14 +114,7 @@ public struct ToolMacro: MemberMacro, ExtensionMacro {
             // Check for @Parameter properties with non-literal defaults
             if let varDecl = member.decl.as(VariableDeclSyntax.self),
                !varDecl.modifiers.contains(where: { $0.name.text == "static" }) {
-                let hasParameter = varDecl.attributes.contains { attr in
-                    if case .attribute(let attrSyntax) = attr,
-                       let identifier = attrSyntax.attributeName.as(IdentifierTypeSyntax.self) {
-                        return identifier.name.text == "Parameter"
-                    }
-                    return false
-                }
-                if hasParameter {
+                if hasParameterAttribute(varDecl) {
                     for binding in varDecl.bindings {
                         if let initializer = binding.initializer,
                            !isLiteralExpression(initializer.value) {
@@ -204,6 +197,7 @@ public struct ToolMacro: MemberMacro, ExtensionMacro {
         var annotationsSyntax: SyntaxProtocol?
         var strictSchema: Bool = false
         var hasContextParameter: Bool = true  // Default to true for backwards compatibility
+        var hasPerformMethod: Bool = false
 
         for member in structDecl.memberBlock.members {
             let decl = member.decl
@@ -252,17 +246,7 @@ public struct ToolMacro: MemberMacro, ExtensionMacro {
             // Look for @Parameter properties
             if let varDecl = decl.as(VariableDeclSyntax.self),
                !varDecl.modifiers.contains(where: { $0.name.text == "static" }) {
-
-                // Check for @Parameter attribute
-                let hasParameter = varDecl.attributes.contains { attr in
-                    if case .attribute(let attrSyntax) = attr,
-                       let identifier = attrSyntax.attributeName.as(IdentifierTypeSyntax.self) {
-                        return identifier.name.text == "Parameter"
-                    }
-                    return false
-                }
-
-                if hasParameter {
+                if hasParameterAttribute(varDecl) {
                     for binding in varDecl.bindings {
                         if let paramInfo = try extractParameterInfo(from: varDecl, binding: binding, context: context) {
                             parameters.append(paramInfo)
@@ -274,6 +258,7 @@ public struct ToolMacro: MemberMacro, ExtensionMacro {
             // Look for perform method to get output type and check for context parameter
             if let funcDecl = decl.as(FunctionDeclSyntax.self),
                funcDecl.name.text == "perform" {
+                hasPerformMethod = true
                 if let returnClause = funcDecl.signature.returnClause {
                     outputType = returnClause.type.trimmedDescription
                 }
@@ -291,6 +276,10 @@ public struct ToolMacro: MemberMacro, ExtensionMacro {
 
         guard let toolDescription = description else {
             throw ToolMacroError.missingDescription
+        }
+
+        guard hasPerformMethod else {
+            throw ToolMacroError.missingPerformMethod
         }
 
         // Validate tool name
@@ -424,8 +413,7 @@ public struct ToolMacro: MemberMacro, ExtensionMacro {
         // Extract @Parameter arguments
         for attr in varDecl.attributes {
             if case .attribute(let attrSyntax) = attr,
-               let attrIdentifier = attrSyntax.attributeName.as(IdentifierTypeSyntax.self),
-               attrIdentifier.name.text == "Parameter",
+               isParameterAttribute(attr),
                let arguments = attrSyntax.arguments?.as(LabeledExprListSyntax.self) {
 
                 for arg in arguments {
@@ -589,9 +577,9 @@ public struct ToolMacro: MemberMacro, ExtensionMacro {
                     "_instance.\(prop) = _args[\"\(key)\"].flatMap(\(type).init(parameterValue:))"
                 )
             } else if param.hasDefault {
-                // Has default: use nil-coalescing with wrapped default
+                // Has default: only use default if key is absent; throw if wrong type
                 parseStatements.append(
-                    "if let _value = _args[\"\(key)\"], let _parsed = \(type)(parameterValue: _value) { _instance.\(prop) = _parsed }"
+                    "if let _value = _args[\"\(key)\"] { guard let _parsed = \(type)(parameterValue: _value) else { throw MCPError.internalError(\"Invalid type for '\(key)' - expected \(type)\") }; _instance.\(prop) = _parsed }"
                 )
             } else {
                 // Required: guard and throw - generate two separate statements
@@ -763,6 +751,7 @@ enum ToolMacroError: Error, CustomStringConvertible {
     case notAStruct
     case missingName
     case missingDescription
+    case missingPerformMethod
     case invalidToolName(String)
     case nonLiteralDefaultValue(String)
     case duplicateAnnotation(String)
@@ -775,6 +764,8 @@ enum ToolMacroError: Error, CustomStringConvertible {
             return "@Tool requires 'static let name: String' property"
         case .missingDescription:
             return "@Tool requires 'static let description: String' property"
+        case .missingPerformMethod:
+            return "@Tool requires a 'func perform() async throws' method"
         case .invalidToolName(let reason):
             return "Invalid tool name: \(reason)"
         case .nonLiteralDefaultValue(let param):
@@ -849,6 +840,35 @@ extension ToolMacro {
             return "Tool name '\(name)' ends with '\(name.last!)' which may cause compatibility issues"
         }
         return nil
+    }
+}
+
+// MARK: - Attribute Matching
+
+extension ToolMacro {
+    /// Checks if an attribute is the `@Parameter` attribute.
+    /// Recognizes both `@Parameter` and `@MCP.Parameter` forms for compatibility
+    /// when MCP module is imported alongside other frameworks that also define Parameter.
+    static func isParameterAttribute(_ attr: AttributeListSyntax.Element) -> Bool {
+        guard case .attribute(let attrSyntax) = attr else { return false }
+
+        // Check for simple `@Parameter`
+        if let identifier = attrSyntax.attributeName.as(IdentifierTypeSyntax.self) {
+            return identifier.name.text == "Parameter"
+        }
+
+        // Check for qualified `@MCP.Parameter`
+        if let memberType = attrSyntax.attributeName.as(MemberTypeSyntax.self),
+           let baseIdentifier = memberType.baseType.as(IdentifierTypeSyntax.self) {
+            return baseIdentifier.name.text == "MCP" && memberType.name.text == "Parameter"
+        }
+
+        return false
+    }
+
+    /// Checks if a variable declaration has the `@Parameter` attribute.
+    static func hasParameterAttribute(_ varDecl: VariableDeclSyntax) -> Bool {
+        varDecl.attributes.contains { isParameterAttribute($0) }
     }
 }
 

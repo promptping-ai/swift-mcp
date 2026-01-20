@@ -312,6 +312,35 @@ struct MatrixTool {
     }
 }
 
+/// Tool with array of dictionaries parameter
+@Tool
+struct RecordsTool {
+    static let name = "records_tool"
+    static let description = "Process an array of record dictionaries"
+
+    @Parameter(description: "Array of record dictionaries")
+    var records: [[String: String]]
+
+    func perform(context: HandlerContext) async throws -> String {
+        "Processed \(records.count) records"
+    }
+}
+
+/// Tool with dictionary of arrays parameter
+@Tool
+struct GroupedDataTool {
+    static let name = "grouped_data_tool"
+    static let description = "Process grouped data with array values"
+
+    @Parameter(description: "Dictionary mapping group names to arrays of integers")
+    var groups: [String: [Int]]
+
+    func perform(context: HandlerContext) async throws -> String {
+        let totalItems = groups.values.reduce(0) { $0 + $1.count }
+        return "Processed \(groups.count) groups with \(totalItems) total items"
+    }
+}
+
 // MARK: - ToolSpec Conformance Tests
 
 @Suite("Tool DSL - ToolSpec Conformance")
@@ -471,6 +500,42 @@ struct ToolSpecConformanceTests {
         #expect(elementSchema?["type"]?.stringValue == "integer")
     }
 
+    @Test("toolDefinition handles array of dictionaries parameters")
+    func toolDefinitionArrayOfDictionariesParameters() {
+        let definition = RecordsTool.toolDefinition
+        let properties = definition.inputSchema.objectValue?["properties"]?.objectValue
+        let recordsSchema = properties?["records"]?.objectValue
+
+        // Outer array
+        #expect(recordsSchema?["type"]?.stringValue == "array")
+
+        // Inner dictionary (items of outer)
+        let innerDictSchema = recordsSchema?["items"]?.objectValue
+        #expect(innerDictSchema?["type"]?.stringValue == "object")
+
+        // Value type of dictionary (additionalProperties)
+        let valueSchema = innerDictSchema?["additionalProperties"]?.objectValue
+        #expect(valueSchema?["type"]?.stringValue == "string")
+    }
+
+    @Test("toolDefinition handles dictionary of arrays parameters")
+    func toolDefinitionDictionaryOfArraysParameters() {
+        let definition = GroupedDataTool.toolDefinition
+        let properties = definition.inputSchema.objectValue?["properties"]?.objectValue
+        let groupsSchema = properties?["groups"]?.objectValue
+
+        // Outer dictionary
+        #expect(groupsSchema?["type"]?.stringValue == "object")
+
+        // Inner array (additionalProperties)
+        let innerArraySchema = groupsSchema?["additionalProperties"]?.objectValue
+        #expect(innerArraySchema?["type"]?.stringValue == "array")
+
+        // Element type of array (items)
+        let elementSchema = innerArraySchema?["items"]?.objectValue
+        #expect(elementSchema?["type"]?.stringValue == "integer")
+    }
+
     @Test("toolDefinition handles Date parameters")
     func toolDefinitionDateParameters() {
         let definition = ScheduleTool.toolDefinition
@@ -589,6 +654,18 @@ struct ParseMethodTests {
         #expect(tool.page == 3)
     }
 
+    @Test("parse throws error when default parameter has wrong type")
+    func parseThrowsForWrongTypeOnDefault() throws {
+        let args: [String: Value] = [
+            "pageSize": .string("not a number"),  // Wrong type - should throw, not silently use default
+            "page": .int(1)
+        ]
+
+        #expect(throws: MCPError.self) {
+            _ = try PaginatedListTool.parse(from: args)
+        }
+    }
+
     @Test("parse handles array parameters")
     func parseArrayParameter() throws {
         let args: [String: Value] = [
@@ -629,6 +706,38 @@ struct ParseMethodTests {
         #expect(tool.matrix.count == 2)
         #expect(tool.matrix[0] == [1, 2, 3])
         #expect(tool.matrix[1] == [4, 5, 6])
+    }
+
+    @Test("parse handles array of dictionaries parameters")
+    func parseArrayOfDictionariesParameter() throws {
+        let args: [String: Value] = [
+            "records": .array([
+                .object(["name": .string("Alice"), "role": .string("admin")]),
+                .object(["name": .string("Bob"), "role": .string("user")])
+            ])
+        ]
+        let tool = try RecordsTool.parse(from: args)
+
+        #expect(tool.records.count == 2)
+        #expect(tool.records[0]["name"] == "Alice")
+        #expect(tool.records[0]["role"] == "admin")
+        #expect(tool.records[1]["name"] == "Bob")
+        #expect(tool.records[1]["role"] == "user")
+    }
+
+    @Test("parse handles dictionary of arrays parameters")
+    func parseDictionaryOfArraysParameter() throws {
+        let args: [String: Value] = [
+            "groups": .object([
+                "scores": .array([.int(85), .int(90), .int(78)]),
+                "counts": .array([.int(10), .int(20)])
+            ])
+        ]
+        let tool = try GroupedDataTool.parse(from: args)
+
+        #expect(tool.groups.count == 2)
+        #expect(tool.groups["scores"] == [85, 90, 78])
+        #expect(tool.groups["counts"] == [10, 20])
     }
 
     @Test("parse handles Date parameters")
