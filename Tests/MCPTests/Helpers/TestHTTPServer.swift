@@ -1,11 +1,17 @@
 // Copyright © Anthony DePasquale
 
 import Foundation
+
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 import HTTPTypes
 import Hummingbird
 import HummingbirdTesting
 import Logging
 import NIOCore
+import NIOFoundationCompat
 import ServiceLifecycle
 
 @testable import MCP
@@ -160,9 +166,9 @@ actor TestHTTPServer {
         }
 
         let body: Data?
-        let collected = try await request.body.collect(upTo: 10 * 1024 * 1024) // 10MB limit
+        var collected = try await request.body.collect(upTo: 10 * 1024 * 1024) // 10MB limit
         if collected.readableBytes > 0 {
-            body = Data(buffer: collected)
+            body = collected.readData(length: collected.readableBytes)
         } else {
             body = nil
         }
@@ -184,7 +190,7 @@ actor TestHTTPServer {
 
         let status = HTTPTypes.HTTPResponse.Status(code: response.statusCode)
         let body = if let bodyData = response.body {
-            ResponseBody(byteBuffer: ByteBuffer(data: bodyData))
+            ResponseBody(byteBuffer: ByteBuffer(bytes: bodyData))
         } else {
             ResponseBody()
         }

@@ -12,29 +12,24 @@ permissions:
 
 jobs:
   test:
-    timeout-minutes: 5
+    timeout-minutes: 30
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
-        swift-version:
-          - 6.1.0
 
     runs-on: ${{ matrix.os }}
-    name: Test (${{ matrix.os }}, Swift ${{ matrix.swift-version }})
+    name: Test (${{ matrix.os }})
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Swift on Linux
+      - name: Set up Swift on Linux
         if: matrix.os == 'ubuntu-latest'
         uses: vapor/swiftly-action@v0.2
         with:
-          toolchain: ${{ matrix.swift-version }}
-      - name: Setup Swift on macOS
-        if: matrix.os == 'macos-latest'
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: ${{ matrix.swift-version }}
+          toolchain: "6.2"
+
+      # macOS uses Xcode's toolchain (avoids Swift 6.2.1 standalone toolchain compiler bug)
 
       - name: Build
         run: swift build -v
@@ -42,15 +37,39 @@ jobs:
       - name: Run tests
         run: swift test -v
 
+  docs:
+    name: Documentation
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Use Xcode's toolchain (avoids Swift 6.2.1 standalone toolchain compiler bug)
+      - name: Verify documentation
+        run: scripts/verify-docs.sh
+
+  conformance:
+    name: Conformance Tests
+    runs-on: macos-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      # macOS uses Xcode's toolchain (avoids Swift 6.2.1 standalone toolchain compiler bug)
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run conformance tests
+        run: scripts/ci/conformance.sh
+
   static-linux-sdk-build:
-    name: Linux Static SDK Build (${{ matrix.swift-version }} - ${{ matrix.os }})
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        swift-version:
-          - 6.1.2
-    runs-on: ${{ matrix.os }}
-    container: swift:${{ matrix.swift-version }}-noble
+    name: Linux Static SDK Build
+    runs-on: ubuntu-latest
+    container: swift:6.2-noble
     timeout-minutes: 30
     steps:
       - name: Check out code
@@ -61,4 +80,4 @@ jobs:
         run: |
           which curl || (apt -q update && apt -yq install curl)
           curl -s --retry 3 https://raw.githubusercontent.com/swiftlang/github-workflows/refs/heads/main/.github/workflows/scripts/install-and-build-with-sdk.sh | \
-          bash -s -- --static --flags="$BUILD_FLAGS" ${{ matrix.swift-version }}
+          bash -s -- --static --flags="$BUILD_FLAGS" 6.2

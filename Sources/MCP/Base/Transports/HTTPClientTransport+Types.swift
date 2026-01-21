@@ -17,6 +17,7 @@ public let mcpDefaultTimeout: TimeInterval = 30.0
 /// Matches the Python SDK's MCP_DEFAULT_SSE_READ_TIMEOUT.
 public let mcpDefaultSSEReadTimeout: TimeInterval = 300.0
 
+#if !os(Linux)
 public extension URLSessionConfiguration {
     /// Creates a URLSessionConfiguration optimized for MCP HTTP transport.
     ///
@@ -36,6 +37,7 @@ public extension URLSessionConfiguration {
         return configuration
     }
 }
+#endif
 
 // MARK: - Reconnection Options
 

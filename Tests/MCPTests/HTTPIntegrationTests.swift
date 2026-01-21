@@ -3,6 +3,10 @@
 import Foundation
 import Testing
 
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 @testable import MCP
 
 /// Integration tests for HTTP transport using real HTTP requests.

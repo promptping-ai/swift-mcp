@@ -588,5 +588,5 @@ For advanced use cases like custom request handling or mixing with other handler
 - ``MCPServer``
 - ``Tool``
 - ``ToolSpec``
-- ``Parameter``
+- ``ParameterValue``
 - ``ToolEnum``

@@ -173,5 +173,5 @@ For scenarios requiring custom request handling, direct protocol access, or mixi
 - <doc:server-prompts>
 - <doc:server-advanced>
 - <doc:transports>
-- `MCPServer`
-- `Server`
+- ``MCPServer``
+- ``Server``

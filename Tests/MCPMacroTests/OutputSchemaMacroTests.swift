@@ -37,7 +37,7 @@ final class OutputSchemaMacroTests: XCTestCase {
                 }
             }
 
-            extension SearchResult: StructuredOutput {
+            extension SearchResult: MCP.StructuredOutput {
             }
             """,
             macros: testMacros
@@ -69,7 +69,7 @@ final class OutputSchemaMacroTests: XCTestCase {
                 }
             }
 
-            extension UserProfile: StructuredOutput {
+            extension UserProfile: MCP.StructuredOutput {
             }
             """,
             macros: testMacros
@@ -103,7 +103,7 @@ final class OutputSchemaMacroTests: XCTestCase {
                 }
             }
 
-            extension AnalysisResult: StructuredOutput {
+            extension AnalysisResult: MCP.StructuredOutput {
             }
             """,
             macros: testMacros

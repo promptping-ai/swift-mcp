@@ -26,6 +26,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "MCP", package: "swift-mcp"),
+                .product(name: "MCPTool", package: "swift-mcp"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ConformanceServer"

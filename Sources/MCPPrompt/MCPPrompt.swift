@@ -202,6 +202,6 @@ public extension Argument where Value: ExpressibleByNilLiteral {
 ///     }
 /// }
 /// ```
-@attached(member, names: named(promptDefinition), named(parse), named(init))
+@attached(member, names: named(promptDefinition), named(parse), named(init), named(render))
 @attached(extension, conformances: PromptSpec, Sendable)
 public macro Prompt() = #externalMacro(module: "MCPMacros", type: "PromptMacro")

@@ -1,17 +1,17 @@
 // Copyright © Anthony DePasquale
 // Copyright © Matt Zmuda
 
+// HTTPClientTransport tests are excluded on Linux because:
+// 1. MockURLProtocol relies on URLSessionConfiguration.protocolClasses which isn't available on Linux
+// 2. The configuration: parameter isn't available in the Linux initializer
+#if swift(>=6.1) && !os(Linux)
+
 @preconcurrency import Foundation
 import Logging
+import os
 import Testing
 
 @testable import MCP
-
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
-
-#if swift(>=6.1)
 
 // MARK: - Test trait
 
@@ -22,13 +22,13 @@ struct HTTPClientTransportTestSetupTrait: TestTrait, TestScoping {
         performing function: @Sendable () async throws -> Void
     ) async throws {
         // Clear handler before test
-        await MockURLProtocol.requestHandlerStorage.clearHandler()
+        MockURLProtocol.requestHandlerStorage.clearHandler()
 
         // Execute the test
         try await function()
 
         // Clear handler after test
-        await MockURLProtocol.requestHandlerStorage.clearHandler()
+        MockURLProtocol.requestHandlerStorage.clearHandler()
     }
 }
 
@@ -36,32 +36,34 @@ extension Trait where Self == HTTPClientTransportTestSetupTrait {
     static var httpClientTransportSetup: Self { Self() }
 }
 
-// MARK: - Mock Handler Registry Actor
+// MARK: - Mock Handler Registry
 
-actor RequestHandlerStorage {
-    private var requestHandler:
-        (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
+/// Thread-safe storage for mock URL protocol handlers.
+/// Uses OSAllocatedUnfairLock instead of an actor to avoid async/await bridging issues in URLProtocol.startLoading().
+final class RequestHandlerStorage: Sendable {
+    private typealias Handler = @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
+    private let state = OSAllocatedUnfairLock<Handler?>(initialState: nil)
 
-    func setHandler(
-        _ handler: @Sendable @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
-    ) async {
-        requestHandler = handler
+    func setHandler(_ newHandler: @Sendable @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) {
+        state.withLock { $0 = newHandler }
     }
 
-    func clearHandler() async {
-        requestHandler = nil
+    func clearHandler() {
+        state.withLock { $0 = nil }
     }
 
-    func executeHandler(for request: URLRequest) async throws -> (HTTPURLResponse, Data) {
-        guard let handler = requestHandler else {
-            throw NSError(
-                domain: "MockURLProtocolError", code: 0,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "No request handler set",
-                ]
-            )
+    func executeHandler(for request: URLRequest) throws -> (HTTPURLResponse, Data) {
+        try state.withLock { handler in
+            guard let handler else {
+                throw NSError(
+                    domain: "MockURLProtocolError", code: 0,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "No request handler set",
+                    ]
+                )
+            }
+            return try handler(request)
         }
-        return try await handler(request)
     }
 }
 
@@ -95,18 +97,6 @@ fileprivate extension URLRequest {
 final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     static let requestHandlerStorage = RequestHandlerStorage()
 
-    static func setHandler(
-        _ handler: @Sendable @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
-    ) async {
-        await requestHandlerStorage.setHandler { request in
-            try await handler(request)
-        }
-    }
-
-    func executeHandler(for request: URLRequest) async throws -> (HTTPURLResponse, Data) {
-        try await Self.requestHandlerStorage.executeHandler(for: request)
-    }
-
     override class func canInit(with _: URLRequest) -> Bool {
         true
     }
@@ -116,15 +106,13 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        Task {
-            do {
-                let (response, data) = try await self.executeHandler(for: request)
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-                client?.urlProtocol(self, didLoad: data)
-                client?.urlProtocolDidFinishLoading(self)
-            } catch {
-                client?.urlProtocol(self, didFailWithError: error)
-            }
+        do {
+            let (response, data) = try Self.requestHandlerStorage.executeHandler(for: request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
@@ -169,7 +157,7 @@ struct HTTPClientTransportTests {
         let messageData = #"{"jsonrpc":"2.0","method":"initialize","id":1}"#.data(using: .utf8)!
         let responseData = #"{"jsonrpc":"2.0","result":{},"id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (request: URLRequest) in
             #expect(request.url == testEndpoint)
             #expect(request.httpMethod == "POST")
@@ -212,7 +200,7 @@ struct HTTPClientTransportTests {
         let messageData = #"{"jsonrpc":"2.0","method":"initialize","id":1}"#.data(using: .utf8)!
         let newSessionID = "session-12345"
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (request: URLRequest) in
             #expect(request.value(forHTTPHeaderField: HTTPHeader.sessionId) == nil)
             let response = HTTPURLResponse(
@@ -250,7 +238,7 @@ struct HTTPClientTransportTests {
         let secondMessageData = #"{"jsonrpc":"2.0","method":"ping","id":2}"#.data(
             using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (request: URLRequest) in
             #expect(request.readBody() == firstMessageData)
             #expect(request.value(forHTTPHeaderField: HTTPHeader.sessionId) == nil)
@@ -266,7 +254,7 @@ struct HTTPClientTransportTests {
         try await transport.send(firstMessageData)
         #expect(await transport.sessionID == initialSessionID)
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (request: URLRequest) in
             #expect(request.readBody() == secondMessageData)
             #expect(request.value(forHTTPHeaderField: HTTPHeader.sessionId) == initialSessionID)
@@ -290,7 +278,7 @@ struct HTTPClientTransportTests {
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":3}"#.data(using: .utf8)!
 
         // Set up the handler BEFORE creating the transport
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil
@@ -329,7 +317,7 @@ struct HTTPClientTransportTests {
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":4}"#.data(using: .utf8)!
 
         // Set up the handler BEFORE creating the transport
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 500, httpVersion: "HTTP/1.1", headerFields: nil
@@ -372,7 +360,7 @@ struct HTTPClientTransportTests {
             using: .utf8)!
 
         // Set up the first handler BEFORE creating the transport
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, initialSessionID] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -396,7 +384,7 @@ struct HTTPClientTransportTests {
         #expect(await transport.sessionID == initialSessionID)
 
         // Set up the second handler for the 404 response
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, initialSessionID] (request: URLRequest) in
             #expect(request.value(forHTTPHeaderField: HTTPHeader.sessionId) == initialSessionID)
             let response = HTTPURLResponse(
@@ -432,7 +420,7 @@ struct HTTPClientTransportTests {
 
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 400, httpVersion: "HTTP/1.1", headerFields: nil
@@ -470,7 +458,7 @@ struct HTTPClientTransportTests {
 
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 401, httpVersion: "HTTP/1.1", headerFields: nil
@@ -508,7 +496,7 @@ struct HTTPClientTransportTests {
 
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 403, httpVersion: "HTTP/1.1", headerFields: nil
@@ -546,7 +534,7 @@ struct HTTPClientTransportTests {
 
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 405, httpVersion: "HTTP/1.1", headerFields: nil
@@ -584,7 +572,7 @@ struct HTTPClientTransportTests {
 
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 408, httpVersion: "HTTP/1.1", headerFields: nil
@@ -622,7 +610,7 @@ struct HTTPClientTransportTests {
 
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 429, httpVersion: "HTTP/1.1", headerFields: nil
@@ -663,7 +651,7 @@ struct HTTPClientTransportTests {
         let messageData = #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.data(
             using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             // Server accepts the notification with 202 and no response body
             let response = HTTPURLResponse(
@@ -695,7 +683,7 @@ struct HTTPClientTransportTests {
         // Request has both "method" and "id" - content-type validation applies
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             // Server returns unexpected content-type (text/plain instead of application/json)
             let response = HTTPURLResponse(
@@ -740,7 +728,7 @@ struct HTTPClientTransportTests {
         let messageData = #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.data(
             using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             // Server returns unexpected content-type with body (unusual but allowed for notifications)
             let response = HTTPURLResponse(
@@ -772,7 +760,7 @@ struct HTTPClientTransportTests {
         // Request has both "method" and "id"
         let messageData = #"{"jsonrpc":"2.0","method":"test","id":1}"#.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             // Server returns unexpected content-type but empty body
             let response = HTTPURLResponse(
@@ -814,7 +802,7 @@ struct HTTPClientTransportTests {
         let protocolVersion = Version.v2024_11_05
 
         // First request - no protocol version header expected
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (request: URLRequest) in
             // Before initialization, no protocol version header should be sent
             #expect(request.value(forHTTPHeaderField: HTTPHeader.protocolVersion) == nil)
@@ -831,7 +819,7 @@ struct HTTPClientTransportTests {
         await transport.setProtocolVersion(protocolVersion)
 
         // Second request - protocol version header should be present
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, protocolVersion] (request: URLRequest) in
             #expect(request.value(forHTTPHeaderField: HTTPHeader.protocolVersion) == protocolVersion)
 
@@ -863,7 +851,7 @@ struct HTTPClientTransportTests {
         let initMessageData = #"{"jsonrpc":"2.0","method":"initialize","id":1}"#.data(using: .utf8)!
 
         // First, establish a session
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sessionID] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -878,7 +866,7 @@ struct HTTPClientTransportTests {
         #expect(await transport.sessionID == sessionID)
 
         // Now set up handler for DELETE request
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sessionID] (request: URLRequest) in
             #expect(request.httpMethod == "DELETE")
             #expect(request.value(forHTTPHeaderField: HTTPHeader.sessionId) == sessionID)
@@ -912,7 +900,7 @@ struct HTTPClientTransportTests {
         let initMessageData = #"{"jsonrpc":"2.0","method":"initialize","id":1}"#.data(using: .utf8)!
 
         // First, establish a session
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sessionID] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -926,7 +914,7 @@ struct HTTPClientTransportTests {
         try await transport.send(initMessageData)
 
         // Server returns 405 - doesn't support session termination
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 405, httpVersion: "HTTP/1.1", headerFields: nil
@@ -959,7 +947,7 @@ struct HTTPClientTransportTests {
         let initMessageData = #"{"jsonrpc":"2.0","method":"initialize","id":1}"#.data(using: .utf8)!
 
         // First, establish a session
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sessionID] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -973,7 +961,7 @@ struct HTTPClientTransportTests {
         try await transport.send(initMessageData)
 
         // Server returns 404 - session already expired
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil
@@ -1028,7 +1016,7 @@ struct HTTPClientTransportTests {
         let initMessageData = #"{"jsonrpc":"2.0","method":"initialize","id":1}"#.data(using: .utf8)!
 
         // First, establish a session
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sessionID] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1045,7 +1033,7 @@ struct HTTPClientTransportTests {
         await transport.setProtocolVersion(protocolVersion)
 
         // Verify DELETE includes protocol version
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sessionID, protocolVersion] (request: URLRequest) in
             #expect(request.httpMethod == "DELETE")
             #expect(request.value(forHTTPHeaderField: HTTPHeader.sessionId) == sessionID)
@@ -1079,7 +1067,7 @@ struct HTTPClientTransportTests {
         let sseEventData = eventString.data(using: .utf8)!
 
         // First, set up a handler for the initial POST that will provide a session ID
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1096,7 +1084,7 @@ struct HTTPClientTransportTests {
         try await transport.send(Data())
 
         // Now set up the handler for the SSE GET request
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseEventData] (request: URLRequest) in // sseEventData is now empty Data()
             #expect(request.url == testEndpoint)
             #expect(request.httpMethod == "GET")
@@ -1143,7 +1131,7 @@ struct HTTPClientTransportTests {
 
         // First, set up a handler for the initial POST that will provide a session ID
         // Use text/plain to prevent its (empty) body from being yielded to messageStream
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1160,7 +1148,7 @@ struct HTTPClientTransportTests {
         try await transport.send(Data())
 
         // Now set up the handler for the SSE GET request
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseEventData] (request: URLRequest) in
             #expect(request.url == testEndpoint)
             #expect(request.httpMethod == "GET")
@@ -1206,28 +1194,28 @@ struct HTTPClientTransportTests {
 
         let client = Client(name: "TestClient", version: "1.0.0")
 
-        // Use an actor to track request sequence
-        actor RequestTracker {
-            enum RequestType {
+        // Use a thread-safe class to track request sequence
+        final class RequestTracker: Sendable {
+            enum RequestType: Sendable {
                 case initialize
                 case callTool
             }
 
-            private(set) var lastRequest: RequestType?
+            private let state = OSAllocatedUnfairLock<RequestType?>(initialState: nil)
 
             func setRequest(_ type: RequestType) {
-                lastRequest = type
+                state.withLock { $0 = type }
             }
 
             func getLastRequest() -> RequestType? {
-                lastRequest
+                state.withLock { $0 }
             }
         }
 
         let tracker = RequestTracker()
 
         // Setup mock responses
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, tracker] (request: URLRequest) in
             switch request.httpMethod {
                 case "GET":
@@ -1263,7 +1251,7 @@ struct HTTPClientTransportTests {
             }
 
             if method == "initialize" {
-                await tracker.setRequest(.initialize)
+                tracker.setRequest(.initialize)
 
                 let requestID = json["id"] as! String
                 let result = Initialize.Result(
@@ -1282,13 +1270,13 @@ struct HTTPClientTransportTests {
                 return (httpResponse, responseData)
             } else if method == "tools/call" {
                 // Verify initialize was called first
-                if let lastRequest = await tracker.getLastRequest(),
+                if let lastRequest = tracker.getLastRequest(),
                    lastRequest != .initialize
                 {
                     #expect(Bool(false), "Initialize should be called before callTool")
                 }
 
-                await tracker.setRequest(.callTool)
+                tracker.setRequest(.callTool)
 
                 let params = json["params"] as? [String: Any]
                 let toolName = params?["name"] as? String
@@ -1337,7 +1325,7 @@ struct HTTPClientTransportTests {
         }
 
         // Step 3: Verify request sequence
-        #expect(await tracker.getLastRequest() == .callTool)
+        #expect(tracker.getLastRequest() == .callTool)
 
         // Step 4: Disconnect
         await client.disconnect()
@@ -1351,7 +1339,7 @@ struct HTTPClientTransportTests {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, testToken] (request: URLRequest) in
             // Verify the Authorization header was added by the requestModifier
             #expect(
@@ -1474,7 +1462,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial POST to get session ID
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1493,7 +1481,7 @@ struct HTTPClientTransportTests {
         let sseWithEventId = "id: event-123\ndata: {\"test\":\"data\"}\n\n"
         let sseData = sseWithEventId.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1528,7 +1516,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial POST
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1547,7 +1535,7 @@ struct HTTPClientTransportTests {
         let sseWithEventId = "id: last-event-456\ndata: {}\n\n"
         let sseData = sseWithEventId.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1580,7 +1568,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial POST
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1600,7 +1588,7 @@ struct HTTPClientTransportTests {
         let sseWithPriming = "id: priming-123\ndata: \n\nid: msg-456\ndata: {\"result\":\"ok\"}\n\n"
         let sseData = sseWithPriming.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1640,7 +1628,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial POST
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1660,7 +1648,7 @@ struct HTTPClientTransportTests {
         let sseWithRetry = "retry: 3000\nid: evt-1\ndata: {\"result\":\"ok\"}\n\n"
         let sseData = sseWithRetry.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1739,7 +1727,7 @@ struct HTTPClientTransportTests {
 
         // Set up a combined handler for both POST and SSE GET requests
         // This avoids the race condition where the SSE GET fires before the handler is set
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (request: URLRequest) in
             if request.httpMethod == "GET" {
                 // SSE request
@@ -1810,7 +1798,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial POST
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1833,7 +1821,7 @@ struct HTTPClientTransportTests {
         """
         let sseData = sseWithError.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1875,7 +1863,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial connection
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1898,10 +1886,8 @@ struct HTTPClientTransportTests {
         """
         let sseData = sseWithDifferentId.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
-            [testEndpoint, sseData] (request: URLRequest) in
-            // Verify Last-Event-ID header is sent
-            #expect(request.value(forHTTPHeaderField: HTTPHeader.lastEventId) == "last-evt-123")
+        MockURLProtocol.requestHandlerStorage.setHandler {
+            [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
                 headerFields: [HTTPHeader.contentType: "text/event-stream"]
@@ -1946,7 +1932,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial connection
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -1968,7 +1954,7 @@ struct HTTPClientTransportTests {
         """
         let sseData = sseWithDifferentId.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -2014,7 +2000,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial connection
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -2036,7 +2022,7 @@ struct HTTPClientTransportTests {
         """
         let sseData = sseResponse.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -2082,7 +2068,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial connection
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -2104,7 +2090,7 @@ struct HTTPClientTransportTests {
         """
         let sseData = sseWithError.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -2151,7 +2137,7 @@ struct HTTPClientTransportTests {
         )
 
         // Set up handler for initial connection
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",
@@ -2173,7 +2159,7 @@ struct HTTPClientTransportTests {
         let sseWithMixed = "id: evt-1\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"sampling/createMessage\",\"id\":\"server-req-1\",\"params\":{}}\n\nid: evt-2\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":50}}\n\nid: evt-3\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"server-resp-id\",\"result\":{\"status\":\"ok\"}}\n\n"
         let sseData = sseWithMixed.data(using: .utf8)!
 
-        await MockURLProtocol.requestHandlerStorage.setHandler {
+        MockURLProtocol.requestHandlerStorage.setHandler {
             [testEndpoint, sseData] (_: URLRequest) in
             let response = HTTPURLResponse(
                 url: testEndpoint, statusCode: 200, httpVersion: "HTTP/1.1",

@@ -22,6 +22,7 @@ import HTTPTypes
 import Hummingbird
 import Logging
 import MCP
+import MCPTool
 
 // MARK: - CLI
 

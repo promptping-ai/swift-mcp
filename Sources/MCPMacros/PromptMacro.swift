@@ -354,6 +354,15 @@ public struct PromptMacro: MemberMacro, ExtensionMacro {
     }
 
     private static func generateParseMethod(promptInfo: PromptInfo) -> DeclSyntax {
+        // For prompts with no arguments, generate a simple parse method
+        if promptInfo.arguments.isEmpty {
+            return """
+            public static func parse(from arguments: [String: String]?) throws -> Self {
+                Self()
+            }
+            """
+        }
+
         var parseStatements: [String] = []
 
         for arg in promptInfo.arguments {
@@ -384,7 +393,7 @@ public struct PromptMacro: MemberMacro, ExtensionMacro {
             }
         }
 
-        let statements = parseStatements.isEmpty ? "" : parseStatements.joined(separator: "\n        ")
+        let statements = parseStatements.joined(separator: "\n        ")
 
         return """
         public static func parse(from arguments: [String: String]?) throws -> Self {

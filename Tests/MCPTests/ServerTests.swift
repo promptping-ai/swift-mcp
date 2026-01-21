@@ -77,9 +77,6 @@ struct ServerTests {
             await state.setHookCalled()
         }
 
-        // Wait for server to initialize
-        try await Task.sleep(for: .milliseconds(10))
-
         // Queue an initialize request
         try await transport.queue(
             request: Initialize.request(
@@ -90,11 +87,11 @@ struct ServerTests {
                 )
             ))
 
-        // Wait for message processing and hook execution
-        try await Task.sleep(for: .milliseconds(500))
+        // Wait for response
+        let received = await transport.waitForSentMessageCount(1)
+        #expect(received, "Timed out waiting for initialize response")
 
         #expect(await state.wasHookCalled() == true)
-        #expect(await transport.sentMessages.count >= 1)
 
         let messages = await transport.sentMessages
         if let response = messages.first {
@@ -117,9 +114,6 @@ struct ServerTests {
             }
         }
 
-        // Wait for server to initialize
-        try await Task.sleep(for: .milliseconds(10))
-
         // Queue an initialize request from blocked client
         try await transport.queue(
             request: Initialize.request(
@@ -130,10 +124,9 @@ struct ServerTests {
                 )
             ))
 
-        // Wait for message processing
-        try await Task.sleep(for: .milliseconds(200))
-
-        #expect(await transport.sentMessages.count >= 1)
+        // Wait for error response
+        let received = await transport.waitForSentMessageCount(1)
+        #expect(received, "Timed out waiting for error response")
 
         let messages = await transport.sentMessages
         if let response = messages.first {

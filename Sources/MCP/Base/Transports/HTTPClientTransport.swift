@@ -117,6 +117,52 @@ public actor HTTPClientTransport: Transport {
         onResumptionToken = callback
     }
 
+    #if os(Linux)
+    /// Creates a new HTTP transport client with the specified endpoint
+    ///
+    /// - Parameters:
+    ///   - endpoint: The server URL to connect to
+    ///   - streaming: Whether to enable SSE streaming mode (default: true).
+    ///     Note: SSE is not fully supported on Linux.
+    ///   - sseInitializationTimeout: Maximum time to wait for session ID before proceeding with SSE (default: 10 seconds)
+    ///   - reconnectionOptions: Configuration for reconnection behavior (default: .default)
+    ///   - requestModifier: Optional closure to customize requests before they are sent (default: no modification)
+    ///   - authProvider: Optional OAuth provider for automatic token management.
+    ///     When provided, the transport will use the provider to obtain Bearer tokens
+    ///     and handle 401 responses. This parameter is reserved for future OAuth
+    ///     implementation and is not currently used.
+    ///   - logger: Optional logger instance for transport events
+    ///
+    /// - Note: On Linux, the `configuration:` parameter is not available because
+    ///   `URLSessionConfiguration` cannot be extended. The transport uses a default
+    ///   configuration with MCP-appropriate timeouts (5 minute request, 1 hour resource).
+    public init(
+        endpoint: URL,
+        streaming: Bool = true,
+        sseInitializationTimeout: TimeInterval = 10,
+        reconnectionOptions: HTTPReconnectionOptions = .default,
+        requestModifier: @escaping (URLRequest) -> URLRequest = { $0 },
+        authProvider: (any OAuthClientProvider)? = nil,
+        logger: Logger? = nil
+    ) {
+        // Create configuration with MCP-appropriate timeouts
+        // (Cannot use .mcp extension on Linux since URLSessionConfiguration cannot be extended)
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = mcpDefaultSSEReadTimeout
+        configuration.timeoutIntervalForResource = 3600
+
+        self.init(
+            endpoint: endpoint,
+            session: URLSession(configuration: configuration),
+            streaming: streaming,
+            sseInitializationTimeout: sseInitializationTimeout,
+            reconnectionOptions: reconnectionOptions,
+            requestModifier: requestModifier,
+            authProvider: authProvider,
+            logger: logger
+        )
+    }
+    #else
     /// Creates a new HTTP transport client with the specified endpoint
     ///
     /// - Parameters:
@@ -154,6 +200,7 @@ public actor HTTPClientTransport: Transport {
             logger: logger
         )
     }
+    #endif
 
     init(
         endpoint: URL,
@@ -246,7 +293,7 @@ public actor HTTPClientTransport: Transport {
         sessionIDSignalContinuation = nil
         sessionIDSignalStream = nil
 
-        logger.debug("HTTP clienttransport disconnected")
+        logger.debug("HTTP client transport disconnected")
     }
 
     /// Terminates the current session by sending a DELETE request to the server.
