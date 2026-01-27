@@ -430,7 +430,7 @@ struct CancellationTests {
             }
 
             // Verify call count
-            let finalCount = await callCounter.count
+            let finalCount = await callCounter.value
             #expect(finalCount == 2, "Both tool calls should have been processed")
         }
 
@@ -1577,18 +1577,6 @@ private actor HandlerCompletionTracker {
 
     var wasCompleted: Bool { _completed }
     var wasCancelled: Bool { _cancelled }
-}
-
-/// Actor to track tool call counts
-private actor CallCounter {
-    private var _count = 0
-
-    func increment() -> Int {
-        _count += 1
-        return _count
-    }
-
-    var count: Int { _count }
 }
 
 /// Actor to track cancellation notifications received by the client

@@ -780,18 +780,3 @@ private actor AtomicCounter {
 
     var value: Int { count }
 }
-
-/// An actor for async event signaling.
-private actor AsyncEvent {
-    private var signaled = false
-
-    func signal() {
-        signaled = true
-    }
-
-    func wait() async {
-        while !signaled {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-    }
-}

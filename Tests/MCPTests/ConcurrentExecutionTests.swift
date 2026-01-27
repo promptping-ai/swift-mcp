@@ -22,41 +22,6 @@ import Testing
 struct ConcurrentExecutionTests {
     // MARK: - Helper Types
 
-    /// An actor that allows async coordination between concurrent tasks.
-    /// Similar to Python's anyio.Event().
-    private actor AsyncEvent {
-        private var signaled = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-
-        func signal() {
-            signaled = true
-            for waiter in waiters {
-                waiter.resume()
-            }
-            waiters.removeAll()
-        }
-
-        func wait() async {
-            if signaled { return }
-            await withCheckedContinuation { continuation in
-                waiters.append(continuation)
-            }
-        }
-
-        var isSignaled: Bool { signaled }
-    }
-
-    /// An actor that tracks the order of events for verification.
-    private actor CallOrderTracker {
-        private var order: [String] = []
-
-        func append(_ event: String) {
-            order.append(event)
-        }
-
-        var events: [String] { order }
-    }
-
     // MARK: - Concurrent Tool Execution Tests
 
     /// Tests that tool calls execute concurrently on the server.
@@ -69,7 +34,8 @@ struct ConcurrentExecutionTests {
     /// - Both tools complete
     ///
     /// If execution were sequential, the sleep tool would block forever.
-    @Test("Tool calls execute concurrently on server")
+    @Test("Tool calls execute concurrently on server",
+          .timeLimit(.minutes(1)))
     func toolCallsExecuteConcurrently() async throws {
         let event = AsyncEvent()
         let toolStarted = AsyncEvent()
@@ -142,7 +108,8 @@ struct ConcurrentExecutionTests {
     /// - "sleep" tool starts and waits on an event
     /// - resource read starts (proves concurrency), signals the event
     /// - Both complete
-    @Test("Tool and resource calls execute concurrently on server")
+    @Test("Tool and resource calls execute concurrently on server",
+          .timeLimit(.minutes(1)))
     func toolAndResourceCallsExecuteConcurrently() async throws {
         let event = AsyncEvent()
         let toolStarted = AsyncEvent()
@@ -222,10 +189,11 @@ struct ConcurrentExecutionTests {
     ///
     /// Pattern: Start N tools that all wait on a shared event, then signal it once.
     /// If sequential, only the first would run and block forever.
-    @Test("Multiple concurrent tool calls all execute in parallel")
+    @Test("Multiple concurrent tool calls all execute in parallel",
+          .timeLimit(.minutes(1)))
     func multipleConcurrentToolCallsExecuteInParallel() async throws {
         let event = AsyncEvent()
-        let startedCount = StartedCounter()
+        let startedCount = CallCounter()
         let expectedConcurrency = 5
 
         let server = Server(
@@ -284,14 +252,154 @@ struct ConcurrentExecutionTests {
         }
     }
 
-    /// Counter actor for tracking how many handlers have started.
-    private actor StartedCounter {
-        private var count = 0
+    /// Tests that a tool throwing an error does not affect other concurrent tool calls.
+    ///
+    /// Pattern:
+    /// - Start a "failing" tool and a "succeeding" tool concurrently
+    /// - The failing tool throws after the succeeding tool starts (proving concurrency)
+    /// - The succeeding tool completes normally despite the other tool's failure
+    @Test("Concurrent tool error does not affect other tool calls",
+          .timeLimit(.minutes(1)))
+    func concurrentToolErrorDoesNotAffectOthers() async throws {
+        let succeedingToolStarted = AsyncEvent()
+        let succeedingToolCanFinish = AsyncEvent()
 
-        func increment() {
-            count += 1
+        let server = Server(
+            name: "ErrorIsolationServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        await server.withRequestHandler(ListTools.self) { _, _ in
+            ListTools.Result(tools: [
+                Tool(name: "failing", description: "Will throw", inputSchema: ["type": "object"]),
+                Tool(name: "succeeding", description: "Will succeed", inputSchema: ["type": "object"]),
+            ])
         }
 
-        var value: Int { count }
+        await server.withRequestHandler(CallTool.self) { request, _ in
+            if request.name == "failing" {
+                // Wait for the succeeding tool to start (proves concurrency)
+                await succeedingToolStarted.wait()
+                // Throw an error
+                throw MCPError.internalError("Deliberate failure")
+            } else if request.name == "succeeding" {
+                await succeedingToolStarted.signal()
+                // Wait for permission to finish (after the failing tool has thrown)
+                await succeedingToolCanFinish.wait()
+                return CallTool.Result(content: [.text("success")])
+            }
+            return CallTool.Result(content: [.text("unknown")])
+        }
+
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        let client = Client(name: "ErrorIsolationClient", version: "1.0")
+
+        try await server.start(transport: serverTransport)
+        try await client.connect(transport: clientTransport)
+
+        // Start both tool calls concurrently
+        let failingTask = Task {
+            try await client.send(CallTool.request(.init(name: "failing", arguments: nil)))
+        }
+
+        let succeedingTask = Task {
+            try await client.send(CallTool.request(.init(name: "succeeding", arguments: nil)))
+        }
+
+        // The failing tool's error is returned as a JSON-RPC error response,
+        // which causes client.send() to throw.
+        do {
+            _ = try await failingTask.value
+            Issue.record("Failing tool should throw an error")
+        } catch {
+            // Expected - the error propagates from the server handler
+        }
+
+        // Now let the succeeding tool finish
+        await succeedingToolCanFinish.signal()
+
+        let succeedResult = try await succeedingTask.value
+        #expect(
+            succeedResult.content.first != nil,
+            "Succeeding tool should complete normally despite concurrent failure"
+        )
+        if case let .text(text, _, _) = succeedResult.content.first {
+            #expect(text == "success")
+        }
+    }
+
+    /// Tests that cancelling one tool call does not affect other concurrent tool calls.
+    ///
+    /// Pattern:
+    /// - Start two tools concurrently, both block on events
+    /// - Cancel the first tool call's task
+    /// - Signal the second tool to finish
+    /// - Verify the second tool completes normally
+    @Test("Cancelling one tool call does not affect others",
+          .timeLimit(.minutes(1)))
+    func cancellingOneToolCallDoesNotAffectOthers() async throws {
+        let toolAStarted = AsyncEvent()
+        let toolBStarted = AsyncEvent()
+        let toolBCanFinish = AsyncEvent()
+
+        let server = Server(
+            name: "CancellationIsolationServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        await server.withRequestHandler(ListTools.self) { _, _ in
+            ListTools.Result(tools: [
+                Tool(name: "tool_a", description: "Will be cancelled", inputSchema: ["type": "object"]),
+                Tool(name: "tool_b", description: "Should succeed", inputSchema: ["type": "object"]),
+            ])
+        }
+
+        await server.withRequestHandler(CallTool.self) { request, _ in
+            if request.name == "tool_a" {
+                await toolAStarted.signal()
+                // Block forever (will be cancelled)
+                try await Task.sleep(for: .seconds(300))
+                return CallTool.Result(content: [.text("a_done")])
+            } else if request.name == "tool_b" {
+                await toolBStarted.signal()
+                await toolBCanFinish.wait()
+                return CallTool.Result(content: [.text("b_done")])
+            }
+            return CallTool.Result(content: [.text("unknown")])
+        }
+
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        let client = Client(name: "CancellationClient", version: "1.0")
+
+        try await server.start(transport: serverTransport)
+        try await client.connect(transport: clientTransport)
+
+        // Start both tool calls
+        let taskA = Task {
+            try await client.send(CallTool.request(.init(name: "tool_a", arguments: nil)))
+        }
+
+        let taskB = Task {
+            try await client.send(CallTool.request(.init(name: "tool_b", arguments: nil)))
+        }
+
+        // Wait for both handlers to start
+        await toolAStarted.wait()
+        await toolBStarted.wait()
+
+        // Cancel task A
+        taskA.cancel()
+
+        // Let task B finish
+        await toolBCanFinish.signal()
+
+        let resultB = try await taskB.value
+        if case let .text(text, _, _) = resultB.content.first {
+            #expect(text == "b_done", "Tool B should complete normally after Tool A is cancelled")
+        } else {
+            Issue.record("Expected text content from tool B")
+        }
     }
 }
