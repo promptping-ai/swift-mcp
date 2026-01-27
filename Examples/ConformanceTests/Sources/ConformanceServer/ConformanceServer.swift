@@ -407,6 +407,98 @@ struct TestToolWithProgress {
     }
 }
 
+/// Tool that requests elicitation from client
+@Tool
+struct TestElicitation {
+    static let name = "test_elicitation"
+    static let description = "Requests elicitation from client"
+
+    @Parameter(description: "Message to display")
+    var message: String
+
+    func perform(context: HandlerContext) async throws -> String {
+        let schema = ElicitationSchema(
+            properties: [
+                "username": .string(StringSchema()),
+                "email": .string(StringSchema()),
+            ],
+            required: ["username", "email"]
+        )
+        let result = try await context.elicit(message: message, requestedSchema: schema)
+        return "Elicitation result: action=\(result.action.rawValue), content=\(String(describing: result.content))"
+    }
+}
+
+/// Tool that requests elicitation with default values for all primitive types
+@Tool
+struct TestElicitationSEP1034Defaults {
+    static let name = "test_elicitation_sep1034_defaults"
+    static let description = "Requests elicitation with default values for all primitive types"
+
+    func perform(context: HandlerContext) async throws -> String {
+        let schema = ElicitationSchema(
+            properties: [
+                "name": .string(StringSchema(defaultValue: "John Doe")),
+                "age": .number(NumberSchema(isInteger: true, defaultValue: 30)),
+                "score": .number(NumberSchema(defaultValue: 95.5)),
+                "status": .untitledEnum(UntitledEnumSchema(
+                    enumValues: ["active", "inactive", "pending"],
+                    defaultValue: "active"
+                )),
+                "verified": .boolean(BooleanSchema(defaultValue: true)),
+            ]
+        )
+        let result = try await context.elicit(
+            message: "Please provide your information",
+            requestedSchema: schema
+        )
+        return "Elicitation result: action=\(result.action.rawValue), content=\(String(describing: result.content))"
+    }
+}
+
+/// Tool that requests elicitation with all enum schema variants
+@Tool
+struct TestElicitationSEP1330Enums {
+    static let name = "test_elicitation_sep1330_enums"
+    static let description = "Requests elicitation with all enum schema variants"
+
+    func perform(context: HandlerContext) async throws -> String {
+        let schema = ElicitationSchema(
+            properties: [
+                "untitledSingle": .untitledEnum(UntitledEnumSchema(
+                    enumValues: ["option1", "option2", "option3"]
+                )),
+                "titledSingle": .titledEnum(TitledEnumSchema(
+                    oneOf: [
+                        TitledEnumOption(const: "opt1", title: "Option 1"),
+                        TitledEnumOption(const: "opt2", title: "Option 2"),
+                        TitledEnumOption(const: "opt3", title: "Option 3"),
+                    ]
+                )),
+                "legacyEnum": .legacyTitledEnum(LegacyTitledEnumSchema(
+                    enumValues: ["val1", "val2", "val3"],
+                    enumNames: ["Value 1", "Value 2", "Value 3"]
+                )),
+                "untitledMulti": .untitledMultiSelect(UntitledMultiSelectEnumSchema(
+                    enumValues: ["choice1", "choice2", "choice3"]
+                )),
+                "titledMulti": .titledMultiSelect(TitledMultiSelectEnumSchema(
+                    options: [
+                        TitledEnumOption(const: "sel1", title: "Selection 1"),
+                        TitledEnumOption(const: "sel2", title: "Selection 2"),
+                        TitledEnumOption(const: "sel3", title: "Selection 3"),
+                    ]
+                )),
+            ]
+        )
+        let result = try await context.elicit(
+            message: "Please select your preferences",
+            requestedSchema: schema
+        )
+        return "Elicitation result: action=\(result.action.rawValue), content=\(String(describing: result.content))"
+    }
+}
+
 /// Tool that requests LLM sampling from client
 @Tool
 struct TestSampling {
@@ -447,6 +539,9 @@ func registerTestTools(_ mcpServer: MCPServer) async throws {
         TestToolWithLogging.self
         TestToolWithProgress.self
         TestSampling.self
+        TestElicitation.self
+        TestElicitationSEP1034Defaults.self
+        TestElicitationSEP1330Enums.self
     }
 }
 
