@@ -423,9 +423,11 @@ public actor HTTPClientTransport: Transport {
     /// revision could consider changing the protocol to receive typed messages
     /// for better alignment with other SDKs.
     ///
-    /// - Parameter data: The JSON-RPC message to send
+    /// - Parameters:
+    ///   - data: The JSON-RPC message to send
+    ///   - options: Transport send options (ignored for HTTP client transport)
     /// - Throws: MCPError for transport failures or server errors
-    public func send(_ data: Data) async throws {
+    public func send(_ data: Data, options _: TransportSendOptions) async throws {
         // Determine if message is a request (has both "method" and "id")
         // Per MCP spec, only requests require content-type validation
         let expectsContentType = isRequest(data)
@@ -706,7 +708,7 @@ public actor HTTPClientTransport: Transport {
     /// after initialization.
     ///
     /// - Parameter version: The negotiated protocol version (e.g., "2024-11-05")
-    public func setProtocolVersion(_ version: String) {
+    public func setProtocolVersion(_ version: String) async {
         protocolVersion = version
         logger.debug("Protocol version set", metadata: ["version": "\(version)"])
     }

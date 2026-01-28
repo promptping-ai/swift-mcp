@@ -856,7 +856,7 @@ struct ProgressTests {
                 }
 
                 // Use sendMessage directly instead of convenience method
-                try await context.sendMessage(ProgressNotification.message(.init(
+                try await context.sendNotification(ProgressNotification.message(.init(
                     progressToken: .string("via-sendMessage"),
                     progress: 42.0,
                     total: 100.0,
@@ -2560,17 +2560,6 @@ struct ProgressTests {
             #expect(TaskStatus.completed.isTerminal == true)
             #expect(TaskStatus.failed.isTerminal == true)
             #expect(TaskStatus.cancelled.isTerminal == true)
-        }
-
-        /// Test that cleanupTaskProgressHandler removes progress callback.
-        @Test("cleanupTaskProgressHandler removes progress callback for task")
-        func cleanUpTaskProgressHandler() async throws {
-            let client = Client(name: "CleanupTest", version: "1.0")
-
-            // Manually test the cleanup method by verifying it doesn't crash
-            // when called with non-existent task ID (should be no-op)
-            await client.cleanUpTaskProgressHandler(taskId: "non-existent-task")
-            // If we get here without crashing, the test passes
         }
 
         /// Test that checkForTaskResponse correctly identifies task responses.

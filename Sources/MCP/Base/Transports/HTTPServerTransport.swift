@@ -144,18 +144,14 @@ public actor HTTPServerTransport: Transport {
     /// Sends data to the appropriate client connection.
     ///
     /// For responses, the request ID is extracted from the message.
-    /// For notifications during tool execution, use `send(_:relatedRequestId:)`.
-    public func send(_ data: Data) async throws {
-        try await send(data, relatedRequestId: nil)
-    }
-
-    /// Sends data with an optional related request ID for response routing.
+    /// For notifications during tool execution, pass the related request ID
+    /// via ``TransportSendOptions/relatedRequestId``.
     ///
     /// - Parameters:
     ///   - data: The data to send
-    ///   - relatedRequestId: The ID of the request this message relates to
-    public func send(_ data: Data, relatedRequestId: RequestId?) async throws {
-        var requestId = relatedRequestId
+    ///   - options: Options controlling how the data is sent
+    public func send(_ data: Data, options: TransportSendOptions) async throws {
+        var requestId = options.relatedRequestId
 
         // For responses, extract the ID from the message
         if requestId == nil {
@@ -166,7 +162,7 @@ public actor HTTPServerTransport: Transport {
         if requestId == nil {
             // Generate and store event ID if event store is provided
             var eventId: String?
-            if let eventStore = options.eventStore {
+            if let eventStore = self.options.eventStore {
                 eventId = try await eventStore.storeEvent(streamId: standaloneSseStreamId, message: data)
             }
 
@@ -197,7 +193,7 @@ public actor HTTPServerTransport: Transport {
         if let streamState = streamMapping[streamId] {
             // Generate event ID if event store is provided
             var eventId: String?
-            if let eventStore = options.eventStore {
+            if let eventStore = self.options.eventStore {
                 eventId = try await eventStore.storeEvent(streamId: streamId, message: data)
             }
 
@@ -431,7 +427,7 @@ public actor HTTPServerTransport: Transport {
             // Only notifications - yield to server and return 202
             // Notifications don't need SSE closures since there's no response stream
             let requestInfo = RequestInfo(headers: request.headers)
-            let context = MessageContext(authInfo: authInfo, requestInfo: requestInfo)
+            let context = MessageMetadata(authInfo: authInfo, requestInfo: requestInfo)
             serverContinuation.yield(TransportMessage(data: body, context: context))
             return HTTPResponse(statusCode: 202, headers: sessionHeaders())
         }
@@ -476,7 +472,7 @@ public actor HTTPServerTransport: Transport {
 
         // JSON response mode doesn't have SSE streams to close
         let requestInfo = RequestInfo(headers: request.headers)
-        let context = MessageContext(authInfo: authInfo, requestInfo: requestInfo)
+        let context = MessageMetadata(authInfo: authInfo, requestInfo: requestInfo)
         serverContinuation.yield(TransportMessage(data: body, context: context))
 
         // Wait for response - this is cancellation-aware unlike withCheckedContinuation
@@ -531,26 +527,26 @@ public actor HTTPServerTransport: Transport {
 
         // Create SSE closure for handlers to close this request's stream
         // Use requestIds[0] for the primary request (batch requests share the same stream)
-        let closeSSEStreamClosure: (@Sendable () async -> Void)? = if let firstRequestId = requestIds.first {
+        let closeResponseStreamClosure: (@Sendable () async -> Void)? = if let firstRequestId = requestIds.first {
             { [weak self] in
-                await self?.closeSSEStream(for: firstRequestId)
+                await self?.closeResponseStream(for: firstRequestId)
             }
         } else {
             nil
         }
 
         // Create closure for standalone SSE stream
-        let closeStandaloneSSEStreamClosure: @Sendable () async -> Void = { [weak self] in
-            await self?.closeStandaloneSSEStream()
+        let closeNotificationStreamClosure: @Sendable () async -> Void = { [weak self] in
+            await self?.closeNotificationStream()
         }
 
         // Create context with auth info, request info, and SSE closures
         let requestInfo = RequestInfo(headers: request.headers)
-        let context = MessageContext(
+        let context = MessageMetadata(
             authInfo: authInfo,
             requestInfo: requestInfo,
-            closeSSEStream: closeSSEStreamClosure,
-            closeStandaloneSSEStream: closeStandaloneSSEStreamClosure
+            closeResponseStream: closeResponseStreamClosure,
+            closeNotificationStream: closeNotificationStreamClosure
         )
 
         // Yield the message to the server with context
@@ -704,7 +700,7 @@ public actor HTTPServerTransport: Transport {
     /// the client will reconnect after the retry interval specified in the priming event.
     ///
     /// - Parameter requestId: The ID of the request whose stream should be closed
-    public func closeSSEStream(for requestId: RequestId) {
+    public func closeResponseStream(for requestId: RequestId) {
         guard let streamId = requestToStreamMapping[requestId] else { return }
 
         if let stream = streamMapping.removeValue(forKey: streamId) {
@@ -715,7 +711,7 @@ public actor HTTPServerTransport: Transport {
     /// Closes the standalone GET SSE stream, triggering client reconnection.
     ///
     /// Use this to implement polling behavior for server-initiated notifications.
-    public func closeStandaloneSSEStream() {
+    public func closeNotificationStream() {
         if let stream = streamMapping.removeValue(forKey: standaloneSseStreamId) {
             stream.cleanup()
         }

@@ -27,7 +27,7 @@ public enum URLModeConfig: Sendable, Hashable {
 }
 
 /// Model Context Protocol client
-public actor Client {
+public actor Client: ProtocolLayer {
     /// The client configuration
     public struct Configuration: Hashable, Codable, Sendable {
         /// The default configuration.
@@ -177,183 +177,14 @@ public actor Client {
         }
     }
 
-    /// Context provided to client request handlers.
-    ///
-    /// This context is passed to handlers for server→client requests (e.g., sampling,
-    /// elicitation, roots) and provides:
-    /// - Cancellation checking via `isCancelled` and `checkCancellation()`
-    /// - Notification sending to the server
-    /// - Progress reporting convenience methods
-    ///
-    /// ## Example
-    ///
-    /// ```swift
-    /// client.withRequestHandler(CreateSamplingMessage.self) { params, context in
-    ///     // Check for cancellation periodically
-    ///     try context.checkCancellation()
-    ///
-    ///     // Report progress back to server
-    ///     try await context.sendProgressNotification(
-    ///         token: progressToken,
-    ///         progress: 50.0,
-    ///         total: 100.0,
-    ///         message: "Processing..."
-    ///     )
-    ///
-    ///     return result
-    /// }
-    /// ```
-    public struct RequestHandlerContext: Sendable {
-        /// Send a notification to the server.
-        ///
-        /// Use this to send notifications from within a request handler.
-        let sendNotification: @Sendable (any NotificationMessageProtocol) async throws -> Void
+    /// Protocol state for JSON-RPC message handling.
+    package var protocolState = ProtocolState()
 
-        /// The JSON-RPC ID of the request being handled.
-        ///
-        /// This can be useful for tracking, logging, or correlating messages.
-        /// It matches the TypeScript SDK's `extra.requestId`.
-        public let requestId: RequestId
+    /// Protocol logger, set from transport during `connect()`.
+    package var protocolLogger: Logger?
 
-        /// The request metadata from the `_meta` field, if present.
-        ///
-        /// Contains metadata like the progress token for progress notifications.
-        /// This matches the TypeScript SDK's `extra._meta` and Python's `ctx.meta`.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// client.withRequestHandler(CreateSamplingMessage.self) { params, context in
-        ///     if let progressToken = context._meta?.progressToken {
-        ///         try await context.sendProgressNotification(
-        ///             token: progressToken,
-        ///             progress: 50,
-        ///             total: 100
-        ///         )
-        ///     }
-        ///     return result
-        /// }
-        /// ```
-        public let _meta: RequestMeta?
-
-        /// The task ID for task-augmented requests, if present.
-        ///
-        /// This is a convenience property that extracts the task ID from the
-        /// `_meta["io.modelcontextprotocol/related-task"]` field. When a server
-        /// sends a task-augmented elicitation or sampling request, this property
-        /// will contain the associated task ID.
-        ///
-        /// This matches the TypeScript SDK's `extra.taskId` and aligns with
-        /// `Server.RequestHandlerContext.taskId`.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// await client.withElicitationHandler { params, context in
-        ///     if let taskId = context.taskId {
-        ///         print("Handling elicitation for task: \(taskId)")
-        ///     }
-        ///     return ElicitResult(action: .accept, content: [:])
-        /// }
-        /// ```
-        public var taskId: String? {
-            _meta?.relatedTaskId
-        }
-
-        // MARK: - Convenience Methods
-
-        /// Send a progress notification to the server.
-        ///
-        /// Use this to report progress on long-running operations initiated by
-        /// server→client requests.
-        ///
-        /// - Parameters:
-        ///   - token: The progress token from the request's `_meta.progressToken`
-        ///   - progress: The current progress value (should increase monotonically)
-        ///   - total: The total progress value, if known
-        ///   - message: An optional human-readable message describing current progress
-        public func sendProgressNotification(
-            token: ProgressToken,
-            progress: Double,
-            total: Double? = nil,
-            message: String? = nil
-        ) async throws {
-            try await sendNotification(
-                ProgressNotification.message(
-                    .init(
-                        progressToken: token,
-                        progress: progress,
-                        total: total,
-                        message: message
-                    )))
-        }
-
-        // MARK: - Cancellation Checking
-
-        /// Whether the request has been cancelled.
-        ///
-        /// Check this property periodically during long-running operations
-        /// to respond to cancellation requests from the server.
-        ///
-        /// This returns `true` when:
-        /// - The server sends a `CancelledNotification` for this request
-        /// - The client is disconnecting
-        ///
-        /// When cancelled, the handler should clean up resources and return
-        /// or throw an error. Per MCP spec, responses are not sent for cancelled requests.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// client.withRequestHandler(CreateSamplingMessage.self) { params, context in
-        ///     for chunk in largeInput {
-        ///         // Check cancellation periodically
-        ///         guard !context.isCancelled else {
-        ///             throw CancellationError()
-        ///         }
-        ///         try await process(chunk)
-        ///     }
-        ///     return result
-        /// }
-        /// ```
-        public var isCancelled: Bool {
-            Task.isCancelled
-        }
-
-        /// Check if the request has been cancelled and throw if so.
-        ///
-        /// Call this method periodically during long-running operations.
-        /// If the request has been cancelled, this throws `CancellationError`.
-        ///
-        /// This is equivalent to checking `isCancelled` and throwing manually,
-        /// but provides a more idiomatic Swift concurrency pattern.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// client.withRequestHandler(CreateSamplingMessage.self) { params, context in
-        ///     for chunk in largeInput {
-        ///         try context.checkCancellation()  // Throws if cancelled
-        ///         try await process(chunk)
-        ///     }
-        ///     return result
-        /// }
-        /// ```
-        ///
-        /// - Throws: `CancellationError` if the request has been cancelled.
-        public func checkCancellation() throws {
-            try Task.checkCancellation()
-        }
-    }
-
-    /// The connection to the server
-    var connection: (any Transport)?
-    /// The logger for the client
-    var logger: Logger? {
-        get async {
-            await connection?.logger
-        }
-    }
+    /// The logger for the client.
+    var logger: Logger? { protocolLogger }
 
     /// The client information
     let clientInfo: Client.Info
@@ -412,9 +243,6 @@ public actor Client {
     /// Task-augmented elicitation handler (called when request has `task` field)
     var taskAugmentedElicitationHandler:
         ExperimentalClientTaskHandlers.TaskAugmentedElicitationHandler?
-    /// The task for the message handling loop
-    var task: Task<Void, Never>?
-
     /// Continuation for the notification dispatch stream.
     ///
     /// User-registered notification handlers are dispatched through this stream
@@ -472,54 +300,6 @@ public actor Client {
     /// Used for protocol-level cancellation when CancelledNotification is received.
     var inFlightServerRequestTasks: [RequestId: Task<Void, Never>] = [:]
 
-    /// An error indicating a type mismatch when decoding a pending request
-    struct TypeMismatchError: Swift.Error {}
-
-    /// A type-erased pending request using AsyncThrowingStream for cancellation-aware waiting.
-    struct AnyPendingRequest {
-        private let _yield: (Result<Any, Swift.Error>) -> Void
-        private let _finish: () -> Void
-
-        init<T: Sendable & Decodable>(
-            continuation: AsyncThrowingStream<T, Swift.Error>.Continuation
-        ) {
-            _yield = { result in
-                switch result {
-                    case let .success(value):
-                        if let typedValue = value as? T {
-                            continuation.yield(typedValue)
-                            continuation.finish()
-                        } else if let value = value as? Value,
-                                  let data = try? JSONEncoder().encode(value),
-                                  let decoded = try? JSONDecoder().decode(T.self, from: data)
-                        {
-                            continuation.yield(decoded)
-                            continuation.finish()
-                        } else {
-                            continuation.finish(throwing: TypeMismatchError())
-                        }
-                    case let .failure(error):
-                        continuation.finish(throwing: error)
-                }
-            }
-            _finish = {
-                continuation.finish()
-            }
-        }
-
-        func resume(returning value: Any) {
-            _yield(.success(value))
-        }
-
-        func resume(throwing error: Swift.Error) {
-            _yield(.failure(error))
-        }
-
-        func finish() {
-            _finish()
-        }
-    }
-
     /// JSON Schema validator for validating tool outputs.
     let validator: any JSONSchemaValidator
 
@@ -527,135 +307,8 @@ public actor Client {
     /// Used to validate tool results in callTool().
     var toolOutputSchemas: [String: Value] = [:]
 
-    /// A dictionary of type-erased pending requests, keyed by request ID
-    var pendingRequests: [RequestId: AnyPendingRequest] = [:]
-    /// Progress callbacks for requests, keyed by progress token.
-    /// Used to invoke callbacks when progress notifications are received.
-    var progressCallbacks: [ProgressToken: ProgressCallback] = [:]
-    /// Timeout controllers for requests with progress-aware timeouts.
-    /// Used to reset timeouts when progress notifications are received.
-    var timeoutControllers: [ProgressToken: TimeoutController] = [:]
-    /// Mapping from request ID to progress token.
-    /// Used to detect task-augmented responses and keep progress handlers alive.
-    var requestProgressTokens: [RequestId: ProgressToken] = [:]
-    /// Mapping from task ID to progress token.
-    /// Keeps progress handlers alive for task-augmented requests until the task completes.
-    /// Per MCP spec 2025-11-25: "For task-augmented requests, the progressToken provided
-    /// in the original request MUST continue to be used for progress notifications
-    /// throughout the task's lifetime, even after the CreateTaskResult has been returned."
-    var taskProgressTokens: [String: ProgressToken] = [:]
-    // Add reusable JSON encoder/decoder
     let encoder = JSONEncoder()
     let decoder = JSONDecoder()
-
-    /// Controls timeout behavior for a single request, supporting reset on progress.
-    ///
-    /// This actor manages the timeout state for requests that use `resetTimeoutOnProgress`.
-    /// When progress is received, calling `signalProgress()` resets the timeout clock.
-    actor TimeoutController {
-        /// The per-interval timeout duration.
-        let timeout: Duration
-        /// Whether to reset timeout when progress is received.
-        let resetOnProgress: Bool
-        /// Maximum total time to wait regardless of progress.
-        let maxTotalTimeout: Duration?
-        /// The start time of the request (for maxTotalTimeout tracking).
-        let startTime: ContinuousClock.Instant
-        /// The current deadline (updated when progress is received).
-        private var deadline: ContinuousClock.Instant
-        /// Whether the controller has been cancelled.
-        private var isCancelled = false
-        /// Continuation for signaling progress.
-        private var progressContinuation: AsyncStream<Void>.Continuation?
-
-        init(timeout: Duration, resetOnProgress: Bool, maxTotalTimeout: Duration?) {
-            self.timeout = timeout
-            self.resetOnProgress = resetOnProgress
-            self.maxTotalTimeout = maxTotalTimeout
-            startTime = ContinuousClock.now
-            deadline = ContinuousClock.now.advanced(by: timeout)
-        }
-
-        /// Signal that progress was received, resetting the timeout.
-        func signalProgress() {
-            guard resetOnProgress, !isCancelled else { return }
-            deadline = ContinuousClock.now.advanced(by: timeout)
-            progressContinuation?.yield()
-        }
-
-        /// Cancel the timeout controller.
-        func cancel() {
-            isCancelled = true
-            progressContinuation?.finish()
-        }
-
-        /// Wait until the timeout expires.
-        ///
-        /// If `resetOnProgress` is true, the timeout resets each time `signalProgress()` is called.
-        /// If `maxTotalTimeout` is set, the wait will end when that limit is exceeded.
-        ///
-        /// - Throws: `MCPError.requestTimeout` when the timeout expires.
-        func waitForTimeout() async throws {
-            let clock = ContinuousClock()
-
-            // Create a stream for progress signals
-            let (progressStream, continuation) = AsyncStream<Void>.makeStream()
-            progressContinuation = continuation
-
-            while !isCancelled {
-                // Check maxTotalTimeout
-                if let maxTotal = maxTotalTimeout {
-                    let elapsed = clock.now - startTime
-                    if elapsed >= maxTotal {
-                        throw MCPError.requestTimeout(
-                            timeout: maxTotal,
-                            message: "Request exceeded maximum total timeout"
-                        )
-                    }
-                }
-
-                // Calculate time until deadline
-                let now = clock.now
-                let timeUntilDeadline = deadline - now
-
-                if timeUntilDeadline <= .zero {
-                    throw MCPError.requestTimeout(
-                        timeout: timeout,
-                        message: "Request timed out"
-                    )
-                }
-
-                // Wait for either timeout or progress signal
-                do {
-                    try await withThrowingTaskGroup(of: Void.self) { group in
-                        // Timeout task
-                        group.addTask {
-                            try await Task.sleep(for: timeUntilDeadline)
-                        }
-
-                        // Progress signal task (if reset is enabled)
-                        if resetOnProgress {
-                            group.addTask {
-                                for await _ in progressStream {
-                                    // Progress received, exit to recalculate deadline
-                                    return
-                                }
-                            }
-                        }
-
-                        // Wait for whichever completes first
-                        try await group.next()
-                        group.cancelAll()
-                    }
-                } catch is CancellationError {
-                    return // Task was cancelled, exit gracefully
-                }
-
-                // If we get here after a progress signal, loop to recalculate deadline
-                // If we get here after timeout, the next iteration will throw
-            }
-        }
-    }
 
     /// Initialize a new MCP client.
     ///
@@ -718,10 +371,10 @@ public actor Client {
         // Lock handler registration after first connection
         handlersLocked = true
 
-        connection = transport
-        try await connection?.connect()
+        try await transport.connect()
+        protocolLogger = await transport.logger
 
-        await logger?.debug(
+        logger?.debug(
             "Client connected", metadata: ["name": "\(name)", "version": "\(version)"]
         )
 
@@ -739,7 +392,7 @@ public actor Client {
                     do {
                         try await handler(notification)
                     } catch {
-                        await logger?.error(
+                        logger?.error(
                             "Error handling notification",
                             metadata: [
                                 "method": "\(notification.method)",
@@ -751,75 +404,14 @@ public actor Client {
             }
         }
 
-        // Start message handling loop
-        //
-        // The receive loop:
-        // - Calls receive() once to get the stream
-        // - Iterates until the stream ends or throws
-        // - Cleans up pending requests on exit
-        //
-        // EAGAIN is handled by the transport layer internally.
-        task = Task {
-            guard let connection = self.connection else { return }
-
-            defer {
-                // When the receive loop exits unexpectedly (transport closed without
-                // disconnect() being called), clean up pending requests.
-                Task {
-                    await self.cleanUpPendingRequestsOnUnexpectedDisconnect()
-                }
-            }
-
-            do {
-                let stream = await connection.receive()
-                for try await transportMessage in stream {
-                    if Task.isCancelled { break }
-
-                    // Extract the raw data from the transport message
-                    // (Client doesn't use message context - authInfo and SSE closures are server-side only)
-                    let data = transportMessage.data
-
-                    // Attempt to decode data
-                    // Try decoding as a batch response first
-                    if let batchResponse = try? decoder.decode([AnyResponse].self, from: data) {
-                        await handleBatchResponse(batchResponse)
-                    } else if let response = try? decoder.decode(AnyResponse.self, from: data) {
-                        await handleResponse(response)
-                    } else if let request = try? decoder.decode(AnyRequest.self, from: data) {
-                        // Handle incoming request from server (bidirectional communication)
-                        // Spawn in a separate task to avoid blocking the message loop.
-                        // This allows client request handlers to make nested requests
-                        // back to the server if needed.
-                        let requestId = request.id
-                        let handlerTask = Task { [weak self] in
-                            guard let self else { return }
-                            defer {
-                                Task { await self.removeInFlightServerRequest(requestId) }
-                            }
-                            await handleIncomingRequest(request)
-                        }
-                        trackInFlightServerRequest(requestId, task: handlerTask)
-                    } else if let message = try? decoder.decode(AnyMessage.self, from: data) {
-                        await handleMessage(message)
-                    } else {
-                        var metadata: Logger.Metadata = [:]
-                        if let string = String(data: data, encoding: .utf8) {
-                            metadata["message"] = .string(string)
-                        }
-                        await logger?.warning(
-                            "Unexpected message received by client (not single/batch response, request, or notification)",
-                            metadata: metadata
-                        )
-                    }
-                }
-                await logger?.debug("Client receive stream ended")
-            } catch {
-                await logger?.error(
-                    "Error in message handling loop", metadata: ["error": "\(error)"]
-                )
-            }
-            await self.logger?.debug("Client message handling loop task is terminating.")
+        // Configure close callback
+        protocolState.onClose = { [weak self] in
+            guard let self else { return }
+            await cleanUpOnUnexpectedDisconnect()
         }
+
+        // Start the message loop (transport is already connected)
+        startProtocolOnConnectedTransport(transport)
 
         // Register default handler for CancelledNotification (protocol-level cancellation).
         // Guarded to prevent duplicate handlers when connect() is called multiple times
@@ -843,87 +435,66 @@ public actor Client {
 
     /// Disconnect the client and cancel all pending requests
     public func disconnect() async {
-        await logger?.debug("Initiating client disconnect...")
+        logger?.debug("Initiating client disconnect...")
 
         // Cancel all in-flight server request handlers
         for (requestId, handlerTask) in inFlightServerRequestTasks {
             handlerTask.cancel()
-            await logger?.debug(
+            logger?.debug(
                 "Cancelled in-flight server request during disconnect",
                 metadata: ["id": "\(requestId)"]
             )
         }
         inFlightServerRequestTasks.removeAll()
 
-        // Part 1: Inside actor - Grab state and clear internal references
-        let taskToCancel = task
+        // Grab notification task before clearing
         let notificationTaskToCancel = notificationTask
-        let connectionToDisconnect = connection
-        let pendingRequestsToCancel = pendingRequests
 
-        task = nil
         notificationTask = nil
-        connection = nil
-        pendingRequests = [:] // Use empty dictionary literal
+        protocolLogger = nil
 
         // End the notification stream so the processing task can exit
         notificationContinuation?.finish()
         notificationContinuation = nil
 
-        // Clear all progress-related state
-        progressCallbacks.removeAll()
-        timeoutControllers.removeAll()
-        requestProgressTokens.removeAll()
-        taskProgressTokens.removeAll()
-
-        // Part 2: Outside actor - Resume continuations, disconnect transport, await task
-
-        // Resume pending request continuations with connection closed error
-        for (_, request) in pendingRequestsToCancel {
-            request.resume(throwing: MCPError.connectionClosed)
-        }
-        await logger?.debug("Pending requests cancelled.")
-
-        // Cancel tasks
-        taskToCancel?.cancel()
+        // Cancel notification task
         notificationTaskToCancel?.cancel()
-        await logger?.debug("Message loop task cancellation requested.")
 
-        // Disconnect the transport *before* awaiting the task
-        // This should ensure the transport stream is finished, unblocking the loop.
-        if let conn = connectionToDisconnect {
-            await conn.disconnect()
-            await logger?.debug("Transport disconnected.")
-        } else {
-            await logger?.debug("No active transport connection to disconnect.")
-        }
+        // Disconnect via protocol conformance (cancels message loop, fails pending, disconnects transport)
+        await stopProtocol()
 
-        // Await task completion *after* transport disconnect
-        await taskToCancel?.value
-        await logger?.debug("Client message loop task finished.")
         await notificationTaskToCancel?.value
-        await logger?.debug("Notification processing task finished.")
-
-        await logger?.debug("Client disconnect complete.")
     }
 
-    /// Cleans up pending requests when the receive loop exits unexpectedly.
-    ///
-    /// This is called from the receive loop's defer block when the transport closes
-    /// without `disconnect()` being called (e.g., server process exits). We only
-    /// clean up requests that haven't already been handled by `disconnect()`.
-    func cleanUpPendingRequestsOnUnexpectedDisconnect() async {
-        guard !pendingRequests.isEmpty else { return }
+    /// Cleans up Client-specific state when the transport closes unexpectedly.
+    func cleanUpOnUnexpectedDisconnect() {
+        logger?.debug("Cleaning up Client state after unexpected disconnect")
+    }
 
-        await logger?.debug(
-            "Cleaning up pending requests after unexpected disconnect",
-            metadata: ["count": "\(pendingRequests.count)"]
-        )
+    // MARK: - ProtocolLayer
 
-        for (_, request) in pendingRequests {
-            request.resume(throwing: MCPError.connectionClosed)
+    /// Handle an incoming request from the peer (server→client).
+    package func handleIncomingRequest(_ request: AnyRequest, data _: Data, context _: MessageMetadata?) async {
+        await handleIncomingRequest(request)
+    }
+
+    /// Handle an incoming notification from the peer.
+    package func handleIncomingNotification(_ notification: AnyMessage, data _: Data) async {
+        await handleMessage(notification)
+    }
+
+    /// Called when the connection closes unexpectedly.
+    package func handleConnectionClosed() async {
+        cleanUpOnUnexpectedDisconnect()
+    }
+
+    /// Intercept a response before pending request matching.
+    package func interceptResponse(_ response: AnyResponse) async {
+        if case let .success(value) = response.result,
+           case let .object(resultObject) = value
+        {
+            await checkForTaskResponse(response: Response<AnyMethod>(id: response.id, result: value), value: resultObject)
         }
-        pendingRequests.removeAll()
     }
 
     // MARK: - In-Flight Server Request Tracking (Protocol-Level Cancellation)
@@ -945,7 +516,7 @@ public actor Client {
     func cancelInFlightServerRequest(_ requestId: RequestId, reason: String?) async {
         if let task = inFlightServerRequestTasks[requestId] {
             task.cancel()
-            await logger?.debug(
+            logger?.debug(
                 "Cancelled in-flight server request",
                 metadata: [
                     "id": "\(requestId)",
@@ -1023,17 +594,17 @@ public actor Client {
     private func validateCapabilities(_ capabilities: Capabilities) async {
         // Check for capabilities advertised without handlers
         if capabilities.sampling != nil, requestHandlers[ClientSamplingRequest.name] == nil {
-            await logger?.warning(
+            logger?.warning(
                 "Sampling capability will be advertised but no handler is registered"
             )
         }
         if capabilities.elicitation != nil, requestHandlers[Elicit.name] == nil {
-            await logger?.warning(
+            logger?.warning(
                 "Elicitation capability will be advertised but no handler is registered"
             )
         }
         if capabilities.roots != nil, requestHandlers[ListRoots.name] == nil {
-            await logger?.warning(
+            logger?.warning(
                 "Roots capability will be advertised but no handler is registered"
             )
         }
@@ -1082,10 +653,10 @@ public actor Client {
         protocolVersion = result.protocolVersion
         instructions = result.instructions
 
-        // HTTP transports must set the protocol version in headers after initialization
-        if let httpTransport = connection as? HTTPClientTransport {
-            await httpTransport.setProtocolVersion(result.protocolVersion)
-        }
+        // Set the negotiated protocol version on the transport.
+        // HTTP transports use this to include the version in request headers.
+        // Simple transports (stdio, in-memory) use the default no-op implementation.
+        await protocolState.transport?.setProtocolVersion(result.protocolVersion)
 
         try await notify(InitializedNotification.message())
 

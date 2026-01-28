@@ -10,6 +10,8 @@ extension Server {
     /// This enables bidirectional communication where the server can request
     /// information from the client (e.g., roots, sampling, elicitation).
     ///
+    /// Delegates to the protocol conformance for request tracking and response matching.
+    ///
     /// - Parameter request: The request to send
     /// - Returns: The result from the client
     public func sendRequest<M: Method>(_ request: Request<M>) async throws -> M.Result {
@@ -19,58 +21,19 @@ extension Server {
 
         guard await connection.supportsServerToClientRequests else {
             throw MCPError.invalidRequest(
-                "Server-to-client requests are not supported in stateless HTTP mode. " +
-                    "Stateless mode has no persistent connection for bidirectional communication."
+                "Server-to-client requests are not supported by this transport. " +
+                    "The transport does not support bidirectional communication."
             )
         }
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard isProtocolConnected else {
+            throw MCPError.internalError("Server protocol not initialized")
+        }
+
         let requestData = try encoder.encode(request)
 
-        // Create stream for receiving the response
-        let (stream, continuation) = AsyncThrowingStream<M.Result, Swift.Error>.makeStream()
-
-        // Clean up pending request if cancelled
-        let requestId = request.id
-        continuation.onTermination = { @Sendable [weak self] _ in
-            Task { await self?.cleanUpPendingRequest(id: requestId) }
-        }
-
-        // Register the pending request
-        pendingRequests[request.id] = AnyServerPendingRequest(continuation: continuation)
-
-        // Send the request
-        do {
-            try await connection.send(requestData)
-        } catch {
-            pendingRequests.removeValue(forKey: request.id)
-            continuation.finish(throwing: error)
-            throw error
-        }
-
-        // Wait for response
-        for try await result in stream {
-            return result
-        }
-
-        throw MCPError.internalError("No response received from client")
-    }
-
-    func cleanUpPendingRequest(id: RequestId) {
-        pendingRequests.removeValue(forKey: id)
-        pendingContextRequests.removeValue(forKey: id)
-    }
-
-    /// Register a pending request from a context's sendRequest call.
-    ///
-    /// This is used by RequestHandlerContext.sendRequest to register pending
-    /// requests that will be fulfilled when the client responds.
-    func registerContextRequest(
-        id: RequestId,
-        continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
-    ) {
-        pendingContextRequests[id] = DataServerPendingRequest(continuation: continuation)
+        let responseData = try await sendProtocolRequest(requestData, requestId: request.id)
+        return try decoder.decode(M.Result.self, from: responseData)
     }
 
     // MARK: - In-Flight Request Tracking (Protocol-Level Cancellation)
@@ -92,7 +55,7 @@ extension Server {
     func cancelInFlightRequest(_ requestId: RequestId, reason: String?) async {
         if let task = inFlightHandlerTasks[requestId] {
             task.cancel()
-            await logger?.debug(
+            logger?.debug(
                 "Cancelled in-flight request",
                 metadata: [
                     "id": "\(requestId)",
@@ -105,9 +68,7 @@ extension Server {
 
     /// Generate a unique request ID for server→client requests.
     func generateRequestId() -> RequestId {
-        let id = nextRequestId
-        nextRequestId += 1
-        return .number(id)
+        generateProtocolRequestId()
     }
 
     /// Request the list of roots from the client.
@@ -300,9 +261,6 @@ extension Server {
         }
 
         // Convert extraFields to the target type
-        let encoder = JSONEncoder()
-        let decoder = JSONDecoder()
-
         let jsonData = try encoder.encode(extraFields)
         return try decoder.decode(T.self, from: jsonData)
     }

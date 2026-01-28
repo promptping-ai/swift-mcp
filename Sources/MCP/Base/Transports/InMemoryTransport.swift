@@ -147,9 +147,11 @@ public actor InMemoryTransport: Transport {
     /// Messages are delivered directly to the paired transport's receive queue
     /// without any additional encoding or framing.
     ///
-    /// - Parameter data: The message data to send
+    /// - Parameters:
+    ///   - data: The message data to send
+    ///   - options: Transport send options (ignored for in-memory transport)
     /// - Throws: MCPError.internalError if not connected or no paired transport
-    public func send(_ data: Data) async throws {
+    public func send(_ data: Data, options _: TransportSendOptions) async throws {
         guard isConnected else {
             throw MCPError.internalError("Transport not connected")
         }

@@ -24,14 +24,14 @@ import Foundation
 /// }
 /// ```
 public struct HandlerContext: Sendable {
-    private let requestContext: Server.RequestHandlerContext
+    private let requestContext: RequestHandlerContext
     private let progressToken: ProgressToken?
 
     /// Creates a new handler context.
     /// - Parameters:
     ///   - handlerContext: The underlying request handler context.
     ///   - progressToken: Optional progress token from the request metadata.
-    public init(handlerContext: Server.RequestHandlerContext, progressToken: ProgressToken? = nil) {
+    public init(handlerContext: RequestHandlerContext, progressToken: ProgressToken? = nil) {
         requestContext = handlerContext
         self.progressToken = progressToken
     }
@@ -253,11 +253,7 @@ public struct HandlerContext: Sendable {
             metadata: metadata
         )
         let request = CreateSamplingMessage.request(id: .random, params)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let requestData = try encoder.encode(request)
-
-        let responseData = try await requestContext.sendRequest(requestData)
+        let responseData = try await requestContext.sendRequest(request)
         return try JSONDecoder().decode(CreateSamplingMessage.Result.self, from: responseData)
     }
 }

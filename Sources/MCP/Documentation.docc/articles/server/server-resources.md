@@ -136,11 +136,14 @@ Resources can include annotations to indicate audience (`user`, `assistant`, or 
 
 ## Notifying Changes
 
-``MCPServer`` automatically sends list change notifications when resources are registered, enabled, disabled, or removed. You can also send manually:
+``MCPServer`` automatically sends list change notifications when resources are registered, enabled, disabled, or removed. To send manually:
 
 ```swift
-// Resource list changed
-await server.sendResourceListChanged()
+// From within a request handler
+try await context.sendResourceListChanged()
+
+// From outside a handler (low-level Server)
+try await server.sendResourceListChanged()
 ```
 
 ## Resource Subscriptions

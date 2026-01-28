@@ -66,7 +66,7 @@ struct StatelessModeTests {
             // Verify it's the stateless mode error, not a capability error
             let errorDescription = String(describing: error)
             #expect(
-                errorDescription.contains("stateless") || errorDescription.contains("server-to-client"),
+                errorDescription.contains("stateless") || errorDescription.localizedCaseInsensitiveContains("server-to-client"),
                 "Expected stateless mode error, got: \(errorDescription)"
             )
         }
@@ -112,7 +112,7 @@ struct StatelessModeTests {
         } catch let error as MCPError {
             let errorDescription = String(describing: error)
             #expect(
-                errorDescription.contains("stateless") || errorDescription.contains("server-to-client"),
+                errorDescription.contains("stateless") || errorDescription.localizedCaseInsensitiveContains("server-to-client"),
                 "Expected stateless mode error, got: \(errorDescription)"
             )
         }
@@ -158,7 +158,7 @@ struct StatelessModeTests {
         } catch let error as MCPError {
             let errorDescription = String(describing: error)
             #expect(
-                errorDescription.contains("stateless") || errorDescription.contains("server-to-client"),
+                errorDescription.contains("stateless") || errorDescription.localizedCaseInsensitiveContains("server-to-client"),
                 "Expected stateless mode error, got: \(errorDescription)"
             )
         }

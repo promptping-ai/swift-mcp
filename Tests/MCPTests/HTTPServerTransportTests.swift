@@ -642,7 +642,7 @@ struct HTTPServerTransportTests {
             let responseData =
                 TestPayloads.initializeResult()
                     .data(using: .utf8)!
-            try await transport.send(responseData, relatedRequestId: .string("1"))
+            try await transport.send(responseData, options: TransportSendOptions(relatedRequestId: .string("1")))
         }
 
         let response = await transport.handleRequest(initRequest)
@@ -720,7 +720,7 @@ struct HTTPServerTransportTests {
             let responseData =
                 TestPayloads.initializeResult()
                     .data(using: .utf8)!
-            try await transport.send(responseData, relatedRequestId: .string("1"))
+            try await transport.send(responseData, options: TransportSendOptions(relatedRequestId: .string("1")))
         }
 
         let response = await transport.handleRequest(initRequest)

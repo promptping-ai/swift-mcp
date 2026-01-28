@@ -1648,6 +1648,105 @@ struct SamplingJSONFormatTests {
     }
 }
 
+@Suite("ToolContext Sampling Tests")
+struct ToolContextSamplingTests {
+    @Test(
+        "Tool using context.createMessage sends correctly encoded request",
+        .timeLimit(.minutes(1))
+    )
+    func testToolContextCreateMessage() async throws {
+        // This test verifies the fix for a double-encoding bug where ToolContext.createMessage
+        // was pre-encoding the request to Data, then calling RequestHandlerContext.sendRequest
+        // which re-encoded it (turning the JSON into a base64 string).
+
+        // Actor to capture sampling request info in a thread-safe way
+        actor SamplingCapture {
+            var receivedRequest = false
+            var receivedMessages: [Sampling.Message] = []
+
+            func capture(messages: [Sampling.Message]) {
+                receivedRequest = true
+                receivedMessages = messages
+            }
+        }
+
+        let capture = SamplingCapture()
+
+        // Create server with a tool that uses context.createMessage
+        let mcpServer = MCPServer(name: "test-server", version: "1.0.0")
+
+        // Register a tool that calls context.createMessage (the HandlerContext method)
+        _ = try await mcpServer.register(
+            name: "test_sampling_tool",
+            description: "A tool that uses createMessage"
+        ) { (context: HandlerContext) in
+            // This exercises the HandlerContext.createMessage path
+            let result = try await context.createMessage(
+                messages: [Sampling.Message.user("Test prompt from tool")],
+                maxTokens: 100
+            )
+
+            // Return the LLM's response
+            switch result.content {
+                case let .text(text, _, _):
+                    return "LLM response: \(text)"
+                default:
+                    return "Non-text response"
+            }
+        }
+
+        // Create the session (Server) from MCPServer
+        let server = await mcpServer.createSession()
+
+        // Create client with sampling handler
+        let client = Client(name: "TestClient", version: "1.0")
+
+        await client.withSamplingHandler { [capture] params, _ in
+            await capture.capture(messages: params.messages)
+
+            return ClientSamplingRequest.Result(
+                model: "test-model",
+                stopReason: .endTurn,
+                role: .assistant,
+                content: [.text("Mock LLM response")]
+            )
+        }
+
+        // Connect via in-memory transport
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+
+        try await server.start(transport: serverTransport)
+        try await client.connect(transport: clientTransport)
+
+        // Call the tool
+        let result = try await client.callTool(name: "test_sampling_tool", arguments: [:])
+
+        // Verify the sampling request was received correctly
+        let receivedRequest = await capture.receivedRequest
+        let receivedMessages = await capture.receivedMessages
+
+        #expect(receivedRequest, "Server should have sent sampling request to client")
+        #expect(receivedMessages.count == 1, "Should have received 1 message")
+        #expect(receivedMessages.first?.role == .user)
+
+        if case let .text(text, _, _) = receivedMessages.first?.content.first {
+            #expect(text == "Test prompt from tool")
+        } else {
+            #expect(Bool(false), "Expected text content in sampling message")
+        }
+
+        // Verify tool result
+        if case let .text(text, _, _) = result.content.first {
+            #expect(text.contains("Mock LLM response"))
+        } else {
+            #expect(Bool(false), "Expected text content in tool result")
+        }
+
+        await server.stop()
+        await client.disconnect()
+    }
+}
+
 @Suite("Server Sampling Capability Validation Tests")
 struct ServerSamplingCapabilityValidationTests {
     @Test(

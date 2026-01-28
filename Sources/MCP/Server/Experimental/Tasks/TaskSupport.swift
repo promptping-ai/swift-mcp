@@ -278,7 +278,7 @@ extension Server {
         withRequestHandler(GetTaskPayload.self) { params, context in
             try await taskSupport.resultHandler.handle(
                 taskId: params.taskId,
-                sendMessage: context.sendData
+                sendMessage: { data in try await context.sendData(data) }
             )
         }
     }

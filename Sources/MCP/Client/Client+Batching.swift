@@ -25,35 +25,13 @@ public extension Client {
         > {
             try requests.append(AnyRequest(request))
 
-            // Create stream for receiving the response
-            let (stream, continuation) = AsyncThrowingStream<M.Result, Swift.Error>.makeStream()
+            // Register pending request (will be matched when response arrives)
+            let stream = await client.registerProtocolPendingRequest(id: request.id)
 
-            // Clean up pending request if caller cancels (e.g., task cancelled)
-            // and send CancelledNotification to server per MCP spec
-            let requestId = request.id
-            continuation.onTermination = { @Sendable [weak client] termination in
-                Task {
-                    guard let client else { return }
-                    await client.cleanUpPendingRequest(id: requestId)
-
-                    // Per MCP spec: send notifications/cancelled when cancelling a request
-                    // Only send if the stream was cancelled (not finished normally)
-                    if case .cancelled = termination {
-                        await client.sendCancellationNotification(
-                            requestId: requestId,
-                            reason: "Client cancelled the batch request"
-                        )
-                    }
-                }
-            }
-
-            // Register the pending request
-            await client.addPendingRequest(id: request.id, continuation: continuation)
-
-            // Return a Task that waits for the response via the stream
+            // Return a Task that waits for the response via the stream and decodes it
             return Task<M.Result, Swift.Error> {
-                for try await result in stream {
-                    return result
+                for try await data in stream {
+                    return try JSONDecoder().decode(M.Result.self, from: data)
                 }
                 throw MCPError.internalError("No response received")
             }
@@ -135,7 +113,7 @@ public extension Client {
     /// - Throws: `MCPError.internalError` if the client is not connected.
     ///           Can also rethrow errors from the `body` closure or from sending the batch request.
     func withBatch(body: @escaping (Batch) async throws -> Void) async throws {
-        guard let connection else {
+        guard let transport = protocolState.transport else {
             throw MCPError.internalError("Client connection not initialized")
         }
 
@@ -150,18 +128,19 @@ public extension Client {
 
         // Check if there are any requests to send
         guard !requests.isEmpty else {
-            await logger?.debug("Batch requested but no requests were added.")
+            logger?.debug("Batch requested but no requests were added.")
             return // Nothing to send
         }
 
-        await logger?.debug(
+        logger?.debug(
             "Sending batch request", metadata: ["count": "\(requests.count)"]
         )
 
         // Encode the array of AnyMethod requests into a single JSON payload
         let data = try encoder.encode(requests)
-        try await connection.send(data)
+        try await transport.send(data)
 
-        // Responses will be handled asynchronously by the message loop and handleBatchResponse/handleResponse.
+        // Responses will be handled asynchronously by the protocol conformance's batch response detection
+        // which matches each response against the registered pending requests.
     }
 }

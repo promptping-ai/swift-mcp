@@ -478,7 +478,7 @@ struct CancellationTests {
 
                 // Server sends a cancellation notification for some other request
                 // This simulates the server cancelling a client's pending request
-                try await context.sendMessage(CancelledNotification.message(.init(
+                try await context.sendNotification(CancelledNotification.message(.init(
                     requestId: .string("client-pending-request"),
                     reason: "Server is cancelling this request"
                 )))
@@ -701,7 +701,7 @@ struct CancellationTests {
                 }
 
                 // Use the context's sendMessage to send a CancelledNotification
-                try await context.sendMessage(CancelledNotification.message(.init(
+                try await context.sendNotification(CancelledNotification.message(.init(
                     requestId: .string("ctx-cancel-request"),
                     reason: "Cancelled via server context"
                 )))

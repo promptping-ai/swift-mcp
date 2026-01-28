@@ -26,12 +26,12 @@ import Testing
 /// Once the Swift SDK adds support for 2025-11-25 (see Versioning.swift TODO), implement:
 /// - `should send priming event with retry field on POST SSE stream`
 /// - `should send priming event without retry field when retryInterval is not configured`
-/// - `should close POST SSE stream when extra.closeSSEStream is called`
-/// - `should provide closeSSEStream callback in extra when eventStore is configured`
-/// - `should NOT provide closeSSEStream callback for old protocol versions`
-/// - `should NOT provide closeSSEStream callback when eventStore is NOT configured`
-/// - `should provide closeStandaloneSSEStream callback in extra when eventStore is configured`
-/// - `should close standalone GET SSE stream when extra.closeStandaloneSSEStream is called`
+/// - `should close POST SSE stream when extra.closeResponseStream is called`
+/// - `should provide closeResponseStream callback in extra when eventStore is configured`
+/// - `should NOT provide closeResponseStream callback for old protocol versions`
+/// - `should NOT provide closeResponseStream callback when eventStore is NOT configured`
+/// - `should provide closeNotificationStream callback in extra when eventStore is configured`
+/// - `should close standalone GET SSE stream when extra.closeNotificationStream is called`
 /// - `should allow client to reconnect after standalone SSE stream is closed`
 ///
 /// The current tests verify that priming events are NOT sent for the currently supported
@@ -341,7 +341,7 @@ struct PrimingEventsTests {
     // MARK: - Close SSE Stream Tests
 
     @Test("Close SSE stream for specific request")
-    func closeSSEStreamForSpecificRequest() async throws {
+    func closeResponseStreamForSpecificRequest() async throws {
         let server = createTestServer()
 
         let eventStore = InMemoryEventStore()
@@ -381,11 +381,11 @@ struct PrimingEventsTests {
         // Initialize and wait for the response (per MCP spec lifecycle)
         try await initializeAndWaitForResponse(transport: transport)
 
-        // The closeSSEStream method exists and is callable
+        // The closeResponseStream method exists and is callable
         // We can't fully test the stream closure without complex async coordination
         // but we can verify the method exists and doesn't crash
         let requestId: RequestId = .string("test-request")
-        await transport.closeSSEStream(for: requestId)
+        await transport.closeResponseStream(for: requestId)
 
         // If we get here without crashing, the method works
     }

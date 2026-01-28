@@ -856,19 +856,19 @@ struct ParseMethodTests {
 struct ToolExecutionTests {
     /// Creates a mock HandlerContext for testing
     func createMockContext() -> HandlerContext {
-        let handlerContext = Server.RequestHandlerContext(
-            sendNotification: { _ in },
-            sendMessage: { _ in },
-            sendData: { _ in },
+        let handlerContext = RequestHandlerContext(
             sessionId: "test-session",
             requestId: .number(1),
             _meta: nil,
+            taskId: nil,
             authInfo: nil,
             requestInfo: nil,
-            closeSSEStream: nil,
-            closeStandaloneSSEStream: nil,
-            shouldSendLogMessage: { _ in true },
-            sendRequest: { _ in throw MCPError.internalError("Not implemented") }
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
+            sendNotification: { _ in },
+            sendRequest: { _ in throw MCPError.internalError("Not implemented") },
+            sendData: { _ in },
+            shouldSendLogMessage: { _ in true }
         )
         return HandlerContext(handlerContext: handlerContext)
     }
@@ -1139,19 +1139,19 @@ struct ToolRegistryTests {
 
     /// Creates a mock HandlerContext for testing
     private func createMockContext() -> HandlerContext {
-        let handlerContext = Server.RequestHandlerContext(
-            sendNotification: { _ in },
-            sendMessage: { _ in },
-            sendData: { _ in },
+        let handlerContext = RequestHandlerContext(
             sessionId: "test-session",
             requestId: .number(1),
             _meta: nil,
+            taskId: nil,
             authInfo: nil,
             requestInfo: nil,
-            closeSSEStream: nil,
-            closeStandaloneSSEStream: nil,
-            shouldSendLogMessage: { _ in true },
-            sendRequest: { _ in throw MCPError.internalError("Not implemented") }
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
+            sendNotification: { _ in },
+            sendRequest: { _ in throw MCPError.internalError("Not implemented") },
+            sendData: { _ in },
+            shouldSendLogMessage: { _ in true }
         )
         return HandlerContext(handlerContext: handlerContext)
     }
@@ -1541,19 +1541,19 @@ struct DSLToolLifecycleTests {
 
     /// Creates a mock HandlerContext for testing
     private func createMockContext() -> HandlerContext {
-        let handlerContext = Server.RequestHandlerContext(
-            sendNotification: { _ in },
-            sendMessage: { _ in },
-            sendData: { _ in },
+        let handlerContext = RequestHandlerContext(
             sessionId: "test-session",
             requestId: .number(1),
             _meta: nil,
+            taskId: nil,
             authInfo: nil,
             requestInfo: nil,
-            closeSSEStream: nil,
-            closeStandaloneSSEStream: nil,
-            shouldSendLogMessage: { _ in true },
-            sendRequest: { _ in throw MCPError.internalError("Not implemented") }
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
+            sendNotification: { _ in },
+            sendRequest: { _ in throw MCPError.internalError("Not implemented") },
+            sendData: { _ in },
+            shouldSendLogMessage: { _ in true }
         )
         return HandlerContext(handlerContext: handlerContext)
     }

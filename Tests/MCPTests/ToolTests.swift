@@ -409,19 +409,19 @@ struct ToolTests {
         }
 
         // Create a dummy context for testing
-        let dummyContext = Server.RequestHandlerContext(
-            sendNotification: { _ in },
-            sendMessage: { _ in },
-            sendData: { _ in },
+        let dummyContext = RequestHandlerContext(
             sessionId: nil,
             requestId: .number(1),
             _meta: nil,
+            taskId: nil,
             authInfo: nil,
             requestInfo: nil,
-            closeSSEStream: nil,
-            closeStandaloneSSEStream: nil,
-            shouldSendLogMessage: { _ in true },
-            sendRequest: { _ in throw MCPError.internalError("Not implemented") }
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
+            sendNotification: { _ in },
+            sendRequest: { _ in throw MCPError.internalError("Not implemented") },
+            sendData: { _ in },
+            shouldSendLogMessage: { _ in true }
         )
         let response = try await handler(anyRequest, context: dummyContext)
 

@@ -77,7 +77,7 @@ import class Foundation.JSONEncoder
 ///
 /// Sampling is done via `server.createMessage()` (matches TypeScript), not through
 /// the context. This design follows each reference SDK's conventions where appropriate.
-public actor Server {
+public actor Server: ProtocolLayer {
     /// The server configuration
     public struct Configuration: Hashable, Codable, Sendable {
         /// The default configuration (strict mode enabled).
@@ -227,582 +227,10 @@ public actor Server {
         }
     }
 
-    /// Context provided to request handlers for sending notifications during execution.
-    ///
-    /// When a request handler needs to send notifications (e.g., progress updates during
-    /// a long-running tool), it should use this context to ensure the notification is
-    /// routed to the correct client, even if other clients have connected in the meantime.
-    ///
-    /// This context provides:
-    /// - Request identification (`requestId`, `_meta`)
-    /// - Session tracking (`sessionId`)
-    /// - Authentication context (`authInfo`)
-    /// - Notification sending (`sendNotification`, `sendMessage`, `sendProgress`)
-    /// - Bidirectional requests (`elicit`, `elicitUrl`)
-    /// - Cancellation checking (`isCancelled`, `checkCancellation`)
-    /// - SSE stream management (`closeSSEStream`, `closeStandaloneSSEStream`)
-    ///
-    /// Example:
-    /// ```swift
-    /// server.withRequestHandler(CallTool.self) { params, context in
-    ///     // Send progress notification using convenience method
-    ///     try await context.sendProgress(
-    ///         token: progressToken,
-    ///         progress: 50.0,
-    ///         total: 100.0,
-    ///         message: "Processing..."
-    ///     )
-    ///     // ... do work ...
-    ///     return result
-    /// }
-    /// ```
-    public struct RequestHandlerContext: Sendable {
-        /// Send a notification without parameters to the client that initiated this request.
-        ///
-        /// The notification will be routed to the correct client even if other clients
-        /// have connected since the request was received.
-        ///
-        /// - Parameter notification: The notification to send (for notifications without parameters)
-        public let sendNotification: @Sendable (any Notification) async throws -> Void
-
-        /// Send a notification message with parameters to the client that initiated this request.
-        ///
-        /// Use this method to send notifications that have parameters, such as `ProgressNotification`
-        /// or `LogMessageNotification`.
-        ///
-        /// Example:
-        /// ```swift
-        /// try await context.sendMessage(ProgressNotification.message(.init(
-        ///     progressToken: token,
-        ///     progress: 50.0,
-        ///     total: 100.0,
-        ///     message: "Halfway done"
-        /// )))
-        /// ```
-        ///
-        /// - Parameter message: The notification message to send
-        public let sendMessage: @Sendable (any NotificationMessageProtocol) async throws -> Void
-
-        /// Send raw data to the client that initiated this request.
-        ///
-        /// This is used internally for sending queued task messages (such as elicitation
-        /// or sampling requests that were queued during task execution).
-        ///
-        /// - Important: This is an internal API primarily used by the task system.
-        ///
-        /// - Parameter data: The raw JSON data to send
-        public let sendData: @Sendable (Data) async throws -> Void
-
-        /// The session identifier for the client that initiated this request.
-        ///
-        /// For HTTP transports with multiple concurrent clients, each client session
-        /// has a unique identifier. This can be used for per-session features like
-        /// independent log levels.
-        ///
-        /// For simple transports (stdio, single-connection), this is `nil`.
-        public let sessionId: String?
-
-        /// The JSON-RPC ID of the request being handled.
-        ///
-        /// This can be useful for tracking, logging, or correlating messages.
-        /// It matches the TypeScript SDK's `extra.requestId`.
-        public let requestId: RequestId
-
-        /// The request metadata from the `_meta` field, if present.
-        ///
-        /// Contains metadata like the progress token for progress notifications.
-        /// This matches the TypeScript SDK's `extra._meta` and Python's `ctx.meta`.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { request, context in
-        ///     if let progressToken = context._meta?.progressToken {
-        ///         try await context.sendProgress(token: progressToken, progress: 50, total: 100)
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        public let _meta: RequestMeta?
-
-        /// The task ID for task-augmented requests, if present.
-        ///
-        /// This is a convenience property that extracts the task ID from the
-        /// `_meta["io.modelcontextprotocol/related-task"]` field.
-        ///
-        /// This matches the TypeScript SDK's `extra.taskId`.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { params, context in
-        ///     if let taskId = context.taskId {
-        ///         print("Handling request as part of task: \(taskId)")
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        public var taskId: String? {
-            _meta?.relatedTaskId
-        }
-
-        /// Authentication information for this request.
-        ///
-        /// Contains validated access token information when using HTTP transports
-        /// with OAuth or other token-based authentication.
-        ///
-        /// This matches the TypeScript SDK's `extra.authInfo`.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { params, context in
-        ///     if let authInfo = context.authInfo {
-        ///         print("Authenticated as: \(authInfo.clientId)")
-        ///         print("Scopes: \(authInfo.scopes)")
-        ///
-        ///         // Check if token has required scope
-        ///         guard authInfo.scopes.contains("tools:execute") else {
-        ///             throw MCPError.invalidRequest("Missing required scope")
-        ///         }
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        public let authInfo: AuthInfo?
-
-        /// Information about the incoming HTTP request.
-        ///
-        /// Contains HTTP headers from the original request. Only available for
-        /// HTTP transports.
-        ///
-        /// This matches the TypeScript SDK's `extra.requestInfo`.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { params, context in
-        ///     if let requestInfo = context.requestInfo {
-        ///         // Access custom headers
-        ///         if let apiVersion = requestInfo.header("X-API-Version") {
-        ///             print("Client API version: \(apiVersion)")
-        ///         }
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        public let requestInfo: RequestInfo?
-
-        /// Closes the SSE stream for this request, triggering client reconnection.
-        ///
-        /// Only available when using HTTPServerTransport with eventStore configured.
-        /// Use this to implement polling behavior during long-running operations -
-        /// the client will reconnect after the retry interval specified in the priming event.
-        ///
-        /// This matches the TypeScript SDK's `extra.closeSSEStream()` and
-        /// Python's `ctx.close_sse_stream()`.
-        ///
-        /// - Note: This is `nil` when not using an HTTP/SSE transport.
-        public let closeSSEStream: (@Sendable () async -> Void)?
-
-        /// Closes the standalone GET SSE stream, triggering client reconnection.
-        ///
-        /// Only available when using HTTPServerTransport with eventStore configured.
-        /// Use this to implement polling behavior for server-initiated notifications.
-        ///
-        /// This matches the TypeScript SDK's `extra.closeStandaloneSSEStream()` and
-        /// Python's `ctx.close_standalone_sse_stream()`.
-        ///
-        /// - Note: This is `nil` when not using an HTTP/SSE transport.
-        public let closeStandaloneSSEStream: (@Sendable () async -> Void)?
-
-        /// Check if a log message at the given level should be sent.
-        ///
-        /// This respects the minimum log level set by the client via `logging/setLevel`.
-        /// Messages below the threshold will be silently dropped.
-        let shouldSendLogMessage: @Sendable (LoggingLevel) async -> Bool
-
-        /// Send a request to the client and wait for a response.
-        ///
-        /// This enables bidirectional communication from within a request handler,
-        /// allowing servers to request information from the client (e.g., elicitation,
-        /// sampling) during request processing.
-        ///
-        /// This matches the TypeScript SDK's `extra.sendRequest()` functionality.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { request, context in
-        ///     // Request user input via elicitation
-        ///     let result = try await context.elicit(
-        ///         message: "Please confirm the operation",
-        ///         requestedSchema: ElicitationSchema(properties: [
-        ///             "confirm": .boolean(BooleanSchema(title: "Confirm"))
-        ///         ])
-        ///     )
-        ///
-        ///     if result.action == .accept {
-        ///         // Process confirmed action
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        let sendRequest: @Sendable (Data) async throws -> Data
-
-        // MARK: - Convenience Methods
-
-        /// Send a progress notification to the client.
-        ///
-        /// Use this to report progress on long-running operations.
-        ///
-        /// - Parameters:
-        ///   - token: The progress token from the request's `_meta.progressToken`
-        ///   - progress: The current progress value (should increase monotonically)
-        ///   - total: The total progress value, if known
-        ///   - message: An optional human-readable message describing current progress
-        public func sendProgress(
-            token: ProgressToken,
-            progress: Double,
-            total: Double? = nil,
-            message: String? = nil
-        ) async throws {
-            try await sendMessage(
-                ProgressNotification.message(
-                    .init(
-                        progressToken: token,
-                        progress: progress,
-                        total: total,
-                        message: message
-                    )))
-        }
-
-        /// Send a log message notification to the client.
-        ///
-        /// The message will only be sent if its level is at or above the minimum
-        /// log level set by the client via `logging/setLevel`. Messages below the
-        /// threshold are silently dropped.
-        ///
-        /// - Parameters:
-        ///   - level: The severity level of the log message
-        ///   - logger: An optional name for the logger producing the message
-        ///   - data: The log message data (can be a string or structured data)
-        public func sendLogMessage(
-            level: LoggingLevel,
-            logger: String? = nil,
-            data: Value
-        ) async throws {
-            // Check if this message should be sent based on the current log level
-            guard await shouldSendLogMessage(level) else { return }
-
-            try await sendMessage(
-                LogMessageNotification.message(
-                    .init(
-                        level: level,
-                        logger: logger,
-                        data: data
-                    )))
-        }
-
-        /// Send a resource list changed notification to the client.
-        ///
-        /// Call this when the list of available resources has changed.
-        public func sendResourceListChanged() async throws {
-            try await sendNotification(ResourceListChangedNotification())
-        }
-
-        /// Send a resource updated notification to the client.
-        ///
-        /// Call this when a specific resource's content has been updated.
-        ///
-        /// - Parameter uri: The URI of the resource that was updated
-        public func sendResourceUpdated(uri: String) async throws {
-            try await sendMessage(ResourceUpdatedNotification.message(.init(uri: uri)))
-        }
-
-        /// Send a tool list changed notification to the client.
-        ///
-        /// Call this when the list of available tools has changed.
-        public func sendToolListChanged() async throws {
-            try await sendNotification(ToolListChangedNotification())
-        }
-
-        /// Send a prompt list changed notification to the client.
-        ///
-        /// Call this when the list of available prompts has changed.
-        public func sendPromptListChanged() async throws {
-            try await sendNotification(PromptListChangedNotification())
-        }
-
-        /// Send a cancellation notification to the client.
-        ///
-        /// - Parameters:
-        ///   - requestId: The ID of the request being cancelled (optional in protocol 2025-11-25+)
-        ///   - reason: An optional reason for the cancellation
-        public func sendCancelled(requestId: RequestId? = nil, reason: String? = nil) async throws {
-            try await sendMessage(
-                CancelledNotification.message(
-                    .init(
-                        requestId: requestId,
-                        reason: reason
-                    )))
-        }
-
-        /// Send an elicitation complete notification to the client.
-        ///
-        /// This notifies the client that an out-of-band (URL mode) elicitation
-        /// request has been completed.
-        ///
-        /// - Parameter elicitationId: The ID of the elicitation that completed.
-        public func sendElicitationComplete(elicitationId: String) async throws {
-            try await sendMessage(
-                ElicitationCompleteNotification.message(
-                    .init(
-                        elicitationId: elicitationId
-                    )))
-        }
-
-        /// Send a task status notification to the client.
-        ///
-        /// This notifies the client of a change in task status.
-        ///
-        /// - Parameter task: The task to send the status notification for.
-        public func sendTaskStatus(task: MCPTask) async throws {
-            try await sendMessage(TaskStatusNotification.message(.init(task: task)))
-        }
-
-        // MARK: - Bidirectional Requests
-
-        /// Request user input via form elicitation from the client.
-        ///
-        /// This enables servers to request structured input from users through
-        /// the client during request handling. The client presents a form based
-        /// on the provided schema and returns the user's response.
-        ///
-        /// This matches the TypeScript SDK's `extra.sendRequest({ method: 'elicitation/create', ... })`
-        /// and Python's `ctx.elicit()` functionality.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { request, context in
-        ///     let result = try await context.elicit(
-        ///         message: "Please confirm the operation",
-        ///         requestedSchema: ElicitationSchema(properties: [
-        ///             "confirm": .boolean(BooleanSchema(title: "Confirm"))
-        ///         ])
-        ///     )
-        ///
-        ///     if result.action == .accept {
-        ///         // User confirmed
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        ///
-        /// - Parameters:
-        ///   - message: The message to present to the user
-        ///   - requestedSchema: The schema defining the form fields
-        /// - Returns: The elicitation result from the client
-        /// - Throws: MCPError if the request fails
-        public func elicit(
-            message: String,
-            requestedSchema: ElicitationSchema
-        ) async throws -> ElicitResult {
-            let params = ElicitRequestFormParams(
-                mode: "form",
-                message: message,
-                requestedSchema: requestedSchema
-            )
-            let request = Elicit.request(id: .random, .form(params))
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            let requestData = try encoder.encode(request)
-
-            let responseData = try await sendRequest(requestData)
-            return try JSONDecoder().decode(ElicitResult.self, from: responseData)
-        }
-
-        /// Request user interaction via URL-mode elicitation from the client.
-        ///
-        /// This enables servers to request out-of-band interactions through
-        /// external URLs (e.g., OAuth flows, credential collection).
-        ///
-        /// - Parameters:
-        ///   - message: Human-readable explanation of why the interaction is needed
-        ///   - url: The URL the user should navigate to
-        ///   - elicitationId: Unique identifier for tracking this elicitation
-        /// - Returns: The elicitation result from the client
-        /// - Throws: MCPError if the request fails
-        public func elicitUrl(
-            message: String,
-            url: String,
-            elicitationId: String
-        ) async throws -> ElicitResult {
-            let params = ElicitRequestURLParams(
-                message: message,
-                elicitationId: elicitationId,
-                url: url
-            )
-            let request = Elicit.request(id: .random, .url(params))
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            let requestData = try encoder.encode(request)
-
-            let responseData = try await sendRequest(requestData)
-            return try JSONDecoder().decode(ElicitResult.self, from: responseData)
-        }
-
-        // MARK: - Cancellation Checking
-
-        /// Whether the request has been cancelled.
-        ///
-        /// Check this property periodically during long-running operations
-        /// to respond to cancellation requests from the client.
-        ///
-        /// This returns `true` when:
-        /// - The client sends a `CancelledNotification` for this request
-        /// - The server is shutting down
-        ///
-        /// When cancelled, the handler should clean up resources and return
-        /// or throw an error. Per MCP spec, responses are not sent for cancelled requests.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { params, context in
-        ///     for item in largeDataset {
-        ///         // Check cancellation periodically
-        ///         guard !context.isCancelled else {
-        ///             throw CancellationError()
-        ///         }
-        ///         try await process(item)
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        public var isCancelled: Bool {
-            Task.isCancelled
-        }
-
-        /// Check if the request has been cancelled and throw if so.
-        ///
-        /// Call this method periodically during long-running operations.
-        /// If the request has been cancelled, this throws `CancellationError`.
-        ///
-        /// This is equivalent to checking `isCancelled` and throwing manually,
-        /// but provides a more idiomatic Swift concurrency pattern.
-        ///
-        /// ## Example
-        ///
-        /// ```swift
-        /// server.withRequestHandler(CallTool.self) { params, context in
-        ///     for item in largeDataset {
-        ///         try context.checkCancellation()  // Throws if cancelled
-        ///         try await process(item)
-        ///     }
-        ///     return CallTool.Result(content: [.text("Done")])
-        /// }
-        /// ```
-        ///
-        /// - Throws: `CancellationError` if the request has been cancelled.
-        public func checkCancellation() throws {
-            try Task.checkCancellation()
-        }
-    }
-
-    /// A type-erased pending request for server→client requests (bidirectional communication).
-    struct AnyServerPendingRequest {
-        private let _yield: (Result<Any, Swift.Error>) -> Void
-        private let _finish: () -> Void
-
-        init<T: Sendable & Decodable>(
-            continuation: AsyncThrowingStream<T, Swift.Error>.Continuation
-        ) {
-            _yield = { result in
-                switch result {
-                    case let .success(value):
-                        if let typedValue = value as? T {
-                            continuation.yield(typedValue)
-                            continuation.finish()
-                        } else if let value = value as? Value,
-                                  let data = try? JSONEncoder().encode(value),
-                                  let decoded = try? JSONDecoder().decode(T.self, from: data)
-                        {
-                            continuation.yield(decoded)
-                            continuation.finish()
-                        } else {
-                            continuation.finish(
-                                throwing: MCPError.internalError("Type mismatch in response"))
-                        }
-                    case let .failure(error):
-                        continuation.finish(throwing: error)
-                }
-            }
-            _finish = {
-                continuation.finish()
-            }
-        }
-
-        func resume(returning value: Any) {
-            _yield(.success(value))
-        }
-
-        func resume(throwing error: Swift.Error) {
-            _yield(.failure(error))
-        }
-
-        func finish() {
-            _finish()
-        }
-    }
-
-    /// A pending request that yields raw Data for callers to decode directly.
-    /// This avoids double-encoding when the caller already knows the target type.
-    struct DataServerPendingRequest {
-        private let _yield: (Result<Data, Swift.Error>) -> Void
-        private let _finish: () -> Void
-
-        init(continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation) {
-            _yield = { result in
-                switch result {
-                    case let .success(data):
-                        continuation.yield(data)
-                        continuation.finish()
-                    case let .failure(error):
-                        continuation.finish(throwing: error)
-                }
-            }
-            _finish = {
-                continuation.finish()
-            }
-        }
-
-        func resume(returning value: Value) {
-            // Encode Value to Data for the caller to decode
-            do {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-                let data = try encoder.encode(value)
-                _yield(.success(data))
-            } catch {
-                _yield(.failure(MCPError.internalError("Failed to encode response: \(error)")))
-            }
-        }
-
-        func resume(throwing error: Swift.Error) {
-            _yield(.failure(error))
-        }
-
-        func finish() {
-            _finish()
-        }
-    }
-
     /// Server information
     let serverInfo: Server.Info
-    /// The server connection
-    var connection: (any Transport)?
+    /// The server connection, sourced from protocol state.
+    var connection: (any Transport)? { protocolState.transport }
     /// Callback invoked when the server's message loop exits (transport disconnected or stopped).
     private var onDisconnect: (@Sendable () async -> Void)?
 
@@ -812,11 +240,7 @@ public actor Server {
     }
 
     /// The server logger
-    var logger: Logger? {
-        get async {
-            await connection?.logger
-        }
-    }
+    var logger: Logger? { protocolLogger }
 
     /// The server name
     public nonisolated var name: String { serverInfo.name }
@@ -856,14 +280,8 @@ public actor Server {
     /// Notification handlers
     var notificationHandlers: [String: [NotificationHandlerBox]] = [:]
 
-    /// Pending requests sent from server to client (for bidirectional communication)
-    var pendingRequests: [RequestId: AnyServerPendingRequest] = [:]
-    /// Pending context requests that return raw Data (for RequestHandlerContext.sendRequest)
-    var pendingContextRequests: [RequestId: DataServerPendingRequest] = [:]
-    /// Counter for generating unique request IDs
-    var nextRequestId = 0
-    /// Response routers for intercepting responses before normal handling
-    var responseRouters: [any ResponseRouter] = []
+    /// Protocol state for JSON-RPC message handling.
+    package var protocolState = ProtocolState()
 
     /// Whether the server is initialized
     var isInitialized = false
@@ -883,8 +301,9 @@ public actor Server {
     public private(set) var protocolVersion: String?
     /// The list of subscriptions
     var subscriptions: [String: Set<RequestId>] = [:]
-    /// The task for the message handling loop
-    var task: Task<Void, Never>?
+    /// Protocol logger (required by ProtocolLayer).
+    /// Stored during start() since connection.logger is async.
+    package var protocolLogger: Logger?
     /// Per-session minimum log levels set by clients.
     ///
     /// For HTTP transports with multiple concurrent clients, each session can
@@ -900,6 +319,14 @@ public actor Server {
 
     /// JSON Schema validator for validating elicitation responses.
     let validator: any JSONSchemaValidator
+
+    let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return encoder
+    }()
+
+    let decoder = JSONDecoder()
 
     public init(
         name: String,
@@ -935,117 +362,25 @@ public actor Server {
         transport: any Transport,
         initializeHook: (@Sendable (Client.Info, Client.Capabilities) async throws -> Void)? = nil
     ) async throws {
-        connection = transport
         registerDefaultHandlers(initializeHook: initializeHook)
         try await transport.connect()
 
-        await logger?.debug(
+        // Cache logger for protocol conformance (avoids async access)
+        protocolLogger = await transport.logger
+
+        protocolLogger?.debug(
             "Server started", metadata: ["name": "\(name)", "version": "\(version)"]
         )
 
-        // Start message handling loop
-        task = Task {
-            do {
-                let stream = await transport.receive()
-                for try await transportMessage in stream {
-                    if Task.isCancelled { break } // Check cancellation inside loop
-
-                    // Extract the raw data and optional context from the transport message
-                    let data = transportMessage.data
-                    let messageContext = transportMessage.context
-
-                    var requestID: RequestId?
-                    do {
-                        // Attempt to decode as batch first, then as individual request, response, or notification
-                        let decoder = JSONDecoder()
-                        if let batch = try? decoder.decode(Server.Batch.self, from: data) {
-                            // Spawn batch handler in a separate task for the same reason
-                            // as individual requests - to support nested server-to-client
-                            // requests within batch item handlers.
-                            Task { [weak self] in
-                                guard let self else { return }
-                                do {
-                                    try await handleBatch(
-                                        batch, messageContext: messageContext
-                                    )
-                                } catch {
-                                    await logger?.error(
-                                        "Error handling batch",
-                                        metadata: ["error": "\(error)"]
-                                    )
-                                }
-                            }
-                        } else if let response = try? decoder.decode(AnyResponse.self, from: data) {
-                            // Handle response from client (for server→client requests)
-                            await handleClientResponse(response)
-                        } else if let request = try? decoder.decode(AnyRequest.self, from: data) {
-                            // Spawn request handler in a separate task to avoid blocking
-                            // the message loop. This allows nested server-to-client requests
-                            // (like elicitation or sampling) to work correctly - the handler
-                            // can await a response while the message loop continues processing
-                            // incoming messages including that response.
-                            let requestId = request.id
-                            let handlerTask = Task { [weak self, messageContext] in
-                                guard let self else { return }
-                                defer {
-                                    Task { await self.removeInFlightRequest(requestId) }
-                                }
-                                do {
-                                    _ = try await handleRequest(
-                                        request, sendResponse: true, messageContext: messageContext
-                                    )
-                                } catch {
-                                    // handleRequest already sends error responses, so this
-                                    // only catches errors from send() itself
-                                    await logger?.error(
-                                        "Error sending response",
-                                        metadata: [
-                                            "error": "\(error)", "requestId": "\(request.id)",
-                                        ]
-                                    )
-                                }
-                            }
-                            trackInFlightRequest(requestId, task: handlerTask)
-                        } else if let message = try? decoder.decode(AnyMessage.self, from: data) {
-                            try await handleMessage(message)
-                        } else {
-                            // Try to extract request ID from raw JSON if possible
-                            if let json = try? JSONDecoder().decode(
-                                [String: Value].self, from: data
-                            ),
-                                let idValue = json["id"]
-                            {
-                                if let strValue = idValue.stringValue {
-                                    requestID = .string(strValue)
-                                } else if let intValue = idValue.intValue {
-                                    requestID = .number(intValue)
-                                }
-                            }
-                            throw MCPError.parseError("Invalid message format")
-                        }
-                    } catch {
-                        // Note: EAGAIN handling is not needed here - the transport layer
-                        // handles it internally. Message handling code won't throw EAGAIN.
-                        await logger?.error(
-                            "Error processing message", metadata: ["error": "\(error)"]
-                        )
-                        // Sanitize non-MCP errors to avoid leaking internal details to clients
-                        let response = AnyMethod.response(
-                            id: requestID ?? .random,
-                            error: error as? MCPError
-                                ?? MCPError.internalError("An internal error occurred")
-                        )
-                        try? await send(response)
-                    }
-                }
-            } catch {
-                await logger?.error(
-                    "Fatal error in message handling loop", metadata: ["error": "\(error)"]
-                )
-            }
-            await logger?.debug("Server finished", metadata: [:])
+        // Configure close callback for disconnect handling.
+        protocolState.onClose = { [weak self] in
+            guard let self else { return }
+            await protocolLogger?.debug("Server finished", metadata: [:])
             await onDisconnect?()
         }
+
+        // Start the message loop (transport is already connected)
+        startProtocolOnConnectedTransport(transport)
     }
 
     /// Stop the server
@@ -1053,23 +388,21 @@ public actor Server {
         // Cancel all in-flight request handlers
         for (requestId, handlerTask) in inFlightHandlerTasks {
             handlerTask.cancel()
-            await logger?.debug(
+            protocolLogger?.debug(
                 "Cancelled in-flight request during shutdown",
                 metadata: ["id": "\(requestId)"]
             )
         }
         inFlightHandlerTasks.removeAll()
 
-        task?.cancel()
-        task = nil
-        if let connection {
-            await connection.disconnect()
-        }
-        connection = nil
+        // Disconnect via protocol conformance (cancels message loop, fails pending, disconnects transport)
+        await stopProtocol()
+
+        protocolLogger = nil
     }
 
     public func waitUntilCompleted() async {
-        await task?.value
+        await waitForProtocolMessageLoop()
     }
 
     // MARK: - Registration
@@ -1150,7 +483,7 @@ public actor Server {
     ///
     /// - Parameter router: The response router to add
     public func addResponseRouter(_ router: any ResponseRouter) {
-        responseRouters.append(router)
+        addProtocolResponseRouter(router)
     }
 
     func registerDefaultHandlers(
@@ -1261,6 +594,106 @@ public actor Server {
         self.clientCapabilities = clientCapabilities
         self.protocolVersion = protocolVersion
         isInitialized = true
+    }
+
+    // MARK: - ProtocolLayer
+
+    /// Handle an incoming request from the client.
+    /// Spawns handler in a separate Task to avoid blocking the message loop.
+    package func handleIncomingRequest(_ request: AnyRequest, data _: Data, context messageContext: MessageMetadata?) async {
+        let requestId = request.id
+        let handlerTask = Task { [weak self, messageContext] in
+            guard let self else { return }
+            defer {
+                Task { await self.removeInFlightRequest(requestId) }
+            }
+            do {
+                _ = try await handleRequest(
+                    request, sendResponse: true, messageContext: messageContext
+                )
+            } catch {
+                await protocolLogger?.error(
+                    "Error sending response",
+                    metadata: [
+                        "error": "\(error)", "requestId": "\(request.id)",
+                    ]
+                )
+            }
+        }
+        trackInFlightRequest(requestId, task: handlerTask)
+    }
+
+    /// Handle an incoming notification from the client.
+    package func handleIncomingNotification(_ notification: AnyMessage, data _: Data) async {
+        do {
+            try await handleMessage(notification)
+        } catch {
+            protocolLogger?.error(
+                "Error handling notification",
+                metadata: ["method": "\(notification.method)", "error": "\(error)"]
+            )
+        }
+    }
+
+    /// Called when the connection closes unexpectedly.
+    /// The `onDisconnect` callback is not called here — it fires through `protocolState.onClose`
+    /// when the protocol layer transitions to `.disconnected`, ensuring it only fires once.
+    package func handleConnectionClosed() async {
+        // Cancel all in-flight request handlers
+        for (requestId, handlerTask) in inFlightHandlerTasks {
+            handlerTask.cancel()
+            protocolLogger?.debug(
+                "Cancelled in-flight request on disconnect",
+                metadata: ["id": "\(requestId)"]
+            )
+        }
+        inFlightHandlerTasks.removeAll()
+    }
+
+    /// Handle unknown/malformed messages by sending error responses.
+    package func handleUnknownMessage(_ data: Data, context _: MessageMetadata?) async {
+        // Try to extract a request ID from raw JSON for the error response
+        var requestID: RequestId = .random
+        if let json = try? JSONDecoder().decode([String: Value].self, from: data),
+           let idValue = json["id"]
+        {
+            if let strValue = idValue.stringValue {
+                requestID = .string(strValue)
+            } else if let intValue = idValue.intValue {
+                requestID = .number(intValue)
+            }
+        }
+        protocolLogger?.error(
+            "Error processing message",
+            metadata: ["error": "Invalid message format"]
+        )
+        let response = AnyMethod.response(
+            id: requestID,
+            error: MCPError.parseError("Invalid message format")
+        )
+        try? await send(response)
+    }
+
+    /// Preprocess a message before standard handling.
+    /// Detects batch requests (JSON arrays) and handles them separately.
+    package func preprocessMessage(_ data: Data, context messageContext: MessageMetadata?) async -> MessagePreprocessResult {
+        if let batch = try? decoder.decode(Server.Batch.self, from: data) {
+            // Spawn batch handler in a separate task to support nested server→client
+            // requests within batch item handlers.
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await handleBatch(batch, messageContext: messageContext)
+                } catch {
+                    await protocolLogger?.error(
+                        "Error handling batch",
+                        metadata: ["error": "\(error)"]
+                    )
+                }
+            }
+            return .handled
+        }
+        return .continue(data)
     }
 }
 

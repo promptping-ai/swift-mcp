@@ -25,41 +25,6 @@ extension Client {
         return meta
     }
 
-    func handleResponse(_ response: Response<AnyMethod>) async {
-        await logger?.trace(
-            "Processing response",
-            metadata: ["id": "\(response.id)"]
-        )
-
-        // Check for task-augmented response BEFORE resuming the request.
-        // Per MCP spec 2025-11-25: progress tokens continue for task lifetime.
-        // If this is a CreateTaskResult, we need to keep the progress handler alive.
-        if case let .success(value) = response.result,
-           case let .object(resultObject) = value
-        {
-            checkForTaskResponse(response: response, value: resultObject)
-        }
-
-        // Attempt to remove the pending request using the response ID.
-        // Resume with the response only if it hadn't yet been removed.
-        if let removedRequest = removePendingRequest(id: response.id) {
-            // If we successfully removed it, resume its continuation.
-            switch response.result {
-                case let .success(value):
-                    removedRequest.resume(returning: value)
-                case let .failure(error):
-                    removedRequest.resume(throwing: error)
-            }
-        } else {
-            // Request was already removed (e.g., by send error handler or disconnect).
-            // Log this, but it's not an error in race condition scenarios.
-            await logger?.warning(
-                "Attempted to handle response for already removed request",
-                metadata: ["id": "\(response.id)"]
-            )
-        }
-    }
-
     /// Check if a response is a task-augmented response (CreateTaskResult).
     ///
     /// If the response contains a `task` object with `taskId`, this is a task-augmented
@@ -68,84 +33,42 @@ extension Client {
     ///
     /// This matches the TypeScript SDK pattern where task progress tokens are kept alive
     /// until the task completes.
-    func checkForTaskResponse(response: Response<AnyMethod>, value: [String: Value]) {
+    func checkForTaskResponse(response: Response<AnyMethod>, value: [String: Value]) async {
         // Check if we have a progress token for this request
-        guard let progressToken = requestProgressTokens[response.id] else { return }
+        guard let progressToken = progressToken(forRequestId: response.id) else { return }
 
         // Check if response has task.taskId (CreateTaskResult pattern)
-        // This mirrors TypeScript's check: result.task?.taskId
         guard let taskValue = value["task"],
               case let .object(taskObject) = taskValue,
               let taskIdValue = taskObject["taskId"],
               case let .string(taskId) = taskIdValue
         else {
-            // Not a task response - clean up request tracking
-            // (the progress callback itself is cleaned up in send() after receiving result)
-            requestProgressTokens.removeValue(forKey: response.id)
             return
         }
 
         // This is a task-augmented response!
         // Migrate progress token from request tracking to task tracking.
-        // This keeps the progress handler alive until the task completes.
-        taskProgressTokens[taskId] = progressToken
-        requestProgressTokens.removeValue(forKey: response.id)
+        setTaskProgressToken(taskId: taskId, progressToken: progressToken)
 
-        Task {
-            await logger?.debug(
-                "Keeping progress handler alive for task",
-                metadata: [
-                    "taskId": "\(taskId)",
-                    "progressToken": "\(progressToken)",
-                ]
-            )
-        }
-    }
-
-    /// Clean up the progress handler for a completed task.
-    ///
-    /// Call this method when a task reaches terminal status (completed, failed, cancelled)
-    /// to remove the progress callback and timeout controller.
-    ///
-    /// ## Example
-    ///
-    /// ```swift
-    /// // Register task status notification handler
-    /// await client.onNotification(TaskStatusNotification.self) { message in
-    ///     if message.params.status.isTerminal {
-    ///         await client.cleanupTaskProgressHandler(taskId: message.params.taskId)
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// - Parameter taskId: The ID of the task that completed.
-    public func cleanUpTaskProgressHandler(taskId: String) {
-        guard let progressToken = taskProgressTokens.removeValue(forKey: taskId) else { return }
-
-        progressCallbacks.removeValue(forKey: progressToken)
-        timeoutControllers.removeValue(forKey: progressToken)
-
-        Task {
-            await logger?.debug(
-                "Cleaned up progress handler for completed task",
-                metadata: ["taskId": "\(taskId)"]
-            )
-        }
+        logger?.debug(
+            "Keeping progress handler alive for task",
+            metadata: [
+                "taskId": "\(taskId)",
+                "progressToken": "\(progressToken)",
+            ]
+        )
     }
 
     func handleMessage(_ message: Message<AnyNotification>) async {
-        await logger?.trace(
+        logger?.trace(
             "Processing notification",
             metadata: ["method": "\(message.method)"]
         )
 
-        // Check if this is a progress notification and invoke any registered callback
-        if message.method == ProgressNotification.name {
-            await handleProgressNotification(message)
-        }
-
         // Check if this is a task status notification and clean up progress handlers
-        // for terminal task statuses (per MCP spec, progress tokens are valid until terminal status)
+        // for terminal task statuses (per MCP spec, progress tokens are valid until terminal status).
+        // Progress notification handling (callbacks and timeout signaling) is done by the protocol conformance
+        // before the notification dispatcher fires.
         if message.method == TaskStatusNotification.name {
             await handleTaskStatusNotification(message)
         }
@@ -156,61 +79,20 @@ extension Client {
         notificationContinuation?.yield(message)
     }
 
-    /// Handle a progress notification by invoking any registered callback.
-    func handleProgressNotification(_ message: Message<AnyNotification>) async {
-        do {
-            // Decode as ProgressNotification.Parameters
-            let paramsData = try encoder.encode(message.params)
-            let params = try decoder.decode(ProgressNotification.Parameters.self, from: paramsData)
-
-            // Look up the callback for this token
-            guard let callback = progressCallbacks[params.progressToken] else {
-                // TypeScript SDK logs an error for unknown progress tokens
-                await logger?.warning(
-                    "Received progress notification for unknown token",
-                    metadata: ["progressToken": "\(params.progressToken)"]
-                )
-                return
-            }
-
-            // Signal the timeout controller if one exists for this token
-            // This allows resetTimeoutOnProgress to work
-            if let timeoutController = timeoutControllers[params.progressToken] {
-                await timeoutController.signalProgress()
-            }
-
-            // Invoke the callback
-            let progress = Progress(
-                value: params.progress,
-                total: params.total,
-                message: params.message
-            )
-            await callback(progress)
-        } catch {
-            await logger?.warning(
-                "Failed to decode progress notification",
-                metadata: ["error": "\(error)"]
-            )
-        }
-    }
-
     /// Handle a task status notification by cleaning up progress handlers for terminal tasks.
     ///
     /// Per MCP spec 2025-11-25: progress tokens continue throughout task lifetime until terminal status.
     /// This method automatically cleans up progress handlers when a task reaches completed, failed, or cancelled.
     func handleTaskStatusNotification(_ message: Message<AnyNotification>) async {
         do {
-            // Decode as TaskStatusNotification.Parameters
             let paramsData = try encoder.encode(message.params)
             let params = try decoder.decode(TaskStatusNotification.Parameters.self, from: paramsData)
 
-            // If the task reached a terminal status, clean up its progress handler
             if params.status.isTerminal {
                 cleanUpTaskProgressHandler(taskId: params.taskId)
             }
         } catch {
             // Don't log errors for task status notifications - they may not be task-related
-            // and the user may not have registered a handler for them
         }
     }
 
@@ -233,7 +115,7 @@ extension Client {
     /// - It keeps task logic separate from normal handler logic
     /// - It's more explicit about which handler is called for which request type
     func handleIncomingRequest(_ request: Request<AnyMethod>) async {
-        await logger?.trace(
+        logger?.trace(
             "Processing incoming request from server",
             metadata: [
                 "method": "\(request.method)",
@@ -259,7 +141,7 @@ extension Client {
 
         // Find handler for method name
         guard let handler = requestHandlers[request.method] else {
-            await logger?.warning(
+            logger?.warning(
                 "No handler registered for server request",
                 metadata: ["method": "\(request.method)"]
             )
@@ -277,18 +159,35 @@ extension Client {
         // This provides cancellation checking and notification sending to the handler
         let requestMeta = extractMeta(from: request.params)
         let context = RequestHandlerContext(
+            sessionId: nil,
+            requestId: request.id,
+            _meta: requestMeta,
+            taskId: requestMeta?.relatedTaskId,
+            authInfo: nil,
+            requestInfo: nil,
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
             sendNotification: { [weak self] notification in
                 guard let self else {
                     throw MCPError.internalError("Client was deallocated")
                 }
-                guard let connection = await connection else {
+                guard let transport = await protocolState.transport else {
                     throw MCPError.internalError("Cannot send notification - client not connected")
                 }
-                let notificationData = try encoder.encode(notification)
-                try await connection.send(notificationData)
+                let notificationData = try JSONEncoder().encode(notification)
+                try await transport.send(notificationData)
             },
-            requestId: request.id,
-            _meta: requestMeta
+            sendRequest: { [weak self] requestData in
+                guard let self else {
+                    throw MCPError.internalError("Client was deallocated")
+                }
+                guard let transport = await protocolState.transport else {
+                    throw MCPError.internalError("Cannot send request - client not connected")
+                }
+                try await transport.send(requestData)
+                // Client doesn't support bidirectional requests from client handlers
+                throw MCPError.internalError("Client handlers cannot send requests")
+            }
         )
 
         // Execute the handler and send response
@@ -299,7 +198,7 @@ extension Client {
             // "Receivers of a cancellation notification SHOULD... Not send a response
             // for the cancelled request")
             if Task.isCancelled {
-                await logger?.debug(
+                logger?.debug(
                     "Server request cancelled, suppressing response",
                     metadata: ["id": "\(request.id)"]
                 )
@@ -310,14 +209,14 @@ extension Client {
         } catch {
             // Also check cancellation on error path - don't send error response if cancelled
             if Task.isCancelled {
-                await logger?.debug(
+                logger?.debug(
                     "Server request cancelled during error handling, suppressing response",
                     metadata: ["id": "\(request.id)"]
                 )
                 return
             }
 
-            await logger?.error(
+            logger?.error(
                 "Error handling server request",
                 metadata: [
                     "method": "\(request.method)",
@@ -365,7 +264,7 @@ extension Client {
             }
         } catch {
             // If we can't decode the params, let the normal handler deal with it
-            await logger?.warning(
+            logger?.warning(
                 "Failed to decode elicitation params for mode validation",
                 metadata: ["error": "\(error)"]
             )
@@ -418,7 +317,7 @@ extension Client {
             return Response(id: request.id, error: error)
         } catch {
             // Log full error for debugging, but sanitize for response
-            await logger?.error("Task handler error", metadata: ["error": "\(error)"])
+            logger?.error("Task handler error", metadata: ["error": "\(error)"])
             return Response(id: request.id, error: MCPError.internalError("An internal error occurred"))
         }
 
@@ -428,16 +327,16 @@ extension Client {
 
     /// Send a response back to the server.
     func sendResponse(_ response: Response<AnyMethod>) async {
-        guard let connection else {
-            await logger?.warning("Cannot send response - client not connected")
+        guard let transport = protocolState.transport else {
+            logger?.warning("Cannot send response - client not connected")
             return
         }
 
         do {
             let responseData = try encoder.encode(response)
-            try await connection.send(responseData)
+            try await transport.send(responseData)
         } catch {
-            await logger?.error(
+            logger?.error(
                 "Failed to send response to server",
                 metadata: ["error": "\(error)"]
             )
@@ -464,28 +363,5 @@ extension Client {
         }
     }
 
-    // Add handler for batch responses
-    func handleBatchResponse(_ responses: [AnyResponse]) async {
-        await logger?.trace("Processing batch response", metadata: ["count": "\(responses.count)"])
-        for response in responses {
-            // Attempt to remove the pending request.
-            // If successful, pendingRequest contains the request.
-            if let pendingRequest = removePendingRequest(id: response.id) {
-                // If we successfully removed it, handle the response using the pending request.
-                switch response.result {
-                    case let .success(value):
-                        pendingRequest.resume(returning: value)
-                    case let .failure(error):
-                        pendingRequest.resume(throwing: error)
-                }
-            } else {
-                // If removal failed, it means the request ID was not found (or already handled).
-                // Log a warning.
-                await logger?.warning(
-                    "Received response in batch for unknown or already handled request ID",
-                    metadata: ["id": "\(response.id)"]
-                )
-            }
-        }
-    }
+    // Batch responses are handled natively by the protocol conformance's handleTransportMessage.
 }

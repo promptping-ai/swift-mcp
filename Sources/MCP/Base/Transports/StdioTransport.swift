@@ -210,9 +210,11 @@ public actor StdioTransport: Transport {
     /// Batches should be encoded as a JSON array containing multiple request/notification objects
     /// according to the JSON-RPC 2.0 specification.
     ///
-    /// - Parameter message: The message data to send (without a trailing newline)
+    /// - Parameters:
+    ///   - message: The message data to send (without a trailing newline)
+    ///   - options: Transport send options (ignored for stdio transport)
     /// - Throws: Error if the message cannot be sent
-    public func send(_ message: Data) async throws {
+    public func send(_ message: Data, options _: TransportSendOptions) async throws {
         guard isConnected else {
             throw MCPError.transportError(Errno(rawValue: ENOTCONN))
         }

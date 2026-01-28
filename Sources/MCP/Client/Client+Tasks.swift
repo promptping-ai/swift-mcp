@@ -76,36 +76,13 @@ extension Client {
 
         // The server should return CreateTaskResult for task-augmented requests
         // We need to decode as CreateTaskResult instead of CallTool.Result
-        guard let connection else {
+        guard isProtocolConnected else {
             throw MCPError.internalError("Client connection not initialized")
         }
 
         let requestData = try encoder.encode(request)
-
-        // Create stream for receiving the response
-        let (stream, continuation) = AsyncThrowingStream<CreateTaskResult, Swift.Error>.makeStream()
-
-        let requestId = request.id
-        continuation.onTermination = { @Sendable [weak self] _ in
-            Task { await self?.cleanUpPendingRequest(id: requestId) }
-        }
-
-        addPendingRequest(id: request.id, continuation: continuation)
-
-        do {
-            try await connection.send(requestData)
-        } catch {
-            if removePendingRequest(id: request.id) != nil {
-                continuation.finish(throwing: error)
-            }
-            throw error
-        }
-
-        for try await result in stream {
-            return result
-        }
-
-        throw MCPError.internalError("No response received")
+        let responseData = try await sendProtocolRequest(requestData, requestId: request.id)
+        return try decoder.decode(CreateTaskResult.self, from: responseData)
     }
 
     func pollTask(taskId: String) -> AsyncThrowingStream<GetTask.Result, any Error> {
@@ -242,7 +219,7 @@ extension Client {
                     continuation.finish()
                 } catch {
                     // Log full error for debugging, but sanitize for stream consumer
-                    await logger?.error("Task stream error", metadata: ["error": "\(error)"])
+                    logger?.error("Task stream error", metadata: ["error": "\(error)"])
                     let mcpError = MCPError.internalError("An internal error occurred")
                     continuation.yield(.error(mcpError))
                     continuation.finish()

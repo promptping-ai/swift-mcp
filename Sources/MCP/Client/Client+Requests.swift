@@ -83,6 +83,8 @@ public extension Client {
 
     /// Send a request and receive its response with options.
     ///
+    /// Delegates to the protocol conformance for request tracking, timeout, and response matching.
+    ///
     /// - Parameters:
     ///   - request: The request to send.
     ///   - options: Options for this request, including timeout configuration.
@@ -92,92 +94,43 @@ public extension Client {
         _ request: Request<M>,
         options: RequestOptions?
     ) async throws -> M.Result {
-        guard let connection else {
+        guard isProtocolConnected else {
             throw MCPError.internalError("Client connection not initialized")
         }
 
         let requestData = try encoder.encode(request)
-
-        // Create stream for receiving the response
-        let (stream, continuation) = AsyncThrowingStream<M.Result, Swift.Error>.makeStream()
-
-        // Track whether we've timed out (for the onTermination handler)
         let requestId = request.id
-        let timeout = options?.timeout
 
-        // Clean up pending request if caller cancels (e.g., task cancelled or timeout)
-        // and send CancelledNotification to server per MCP spec
-        continuation.onTermination = { @Sendable [weak self] termination in
-            Task {
-                guard let self else { return }
-                await self.cleanUpPendingRequest(id: requestId)
-
-                // Per MCP spec: send notifications/cancelled when cancelling a request
-                // Only send if the stream was cancelled (not finished normally)
-                if case .cancelled = termination {
-                    let reason = if let timeout {
-                        "Request timed out after \(timeout)"
-                    } else {
-                        "Client cancelled the request"
-                    }
-                    await self.sendCancellationNotification(
-                        requestId: requestId,
-                        reason: reason
-                    )
-                }
-            }
-        }
-
-        // Add the pending request before attempting to send
-        addPendingRequest(id: request.id, continuation: continuation)
-
-        // Send the request data
         do {
-            try await connection.send(requestData)
+            let protocolOptions = ProtocolRequestOptions(
+                timeout: options?.timeout,
+                resetTimeoutOnProgress: options?.resetTimeoutOnProgress ?? false,
+                maxTotalTimeout: options?.maxTotalTimeout
+            )
+
+            let responseData = try await sendProtocolRequest(
+                requestData,
+                requestId: requestId,
+                options: protocolOptions
+            )
+
+            return try decoder.decode(M.Result.self, from: responseData)
         } catch {
-            // If send fails, remove the pending request and rethrow
-            if removePendingRequest(id: request.id) != nil {
-                continuation.finish(throwing: error)
+            // Send CancelledNotification for timeouts and task cancellations per MCP spec.
+            // Check Task.isCancelled as well since the error may propagate as
+            // MCPError.connectionClosed when the stream ends due to cancellation.
+            if error is CancellationError || Task.isCancelled {
+                await sendCancellationNotification(
+                    requestId: requestId,
+                    reason: "Client cancelled the request"
+                )
+            } else if case let .requestTimeout(t, _) = error as? MCPError {
+                await sendCancellationNotification(
+                    requestId: requestId,
+                    reason: "Request timed out after \(t)"
+                )
             }
             throw error
-        }
-
-        // Wait for response with optional timeout
-        if let timeout {
-            // Use withTimeout pattern for cancellation-aware timeout
-            return try await withThrowingTaskGroup(of: M.Result.self) { group in
-                // Add the main task that waits for the response
-                group.addTask {
-                    for try await result in stream {
-                        return result
-                    }
-                    throw MCPError.internalError("No response received")
-                }
-
-                // Add the timeout task
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    throw MCPError.requestTimeout(timeout: timeout, message: "Request timed out")
-                }
-
-                // Return whichever completes first
-                guard let result = try await group.next() else {
-                    throw MCPError.internalError("No response received")
-                }
-
-                // Cancel the other task
-                group.cancelAll()
-
-                return result
-            }
-        } else {
-            // No timeout - wait indefinitely for response
-            for try await result in stream {
-                return result
-            }
-
-            // Stream closed without yielding a response
-            throw MCPError.internalError("No response received")
         }
     }
 
@@ -225,7 +178,7 @@ public extension Client {
         options: RequestOptions?,
         onProgress: @escaping ProgressCallback
     ) async throws -> M.Result {
-        guard let connection else {
+        guard isProtocolConnected else {
             throw MCPError.internalError("Client connection not initialized")
         }
 
@@ -250,181 +203,49 @@ public extension Client {
         requestDict["params"] = .object(params)
 
         let modifiedRequestData = try encoder.encode(requestDict)
-
-        // Register the progress callback and track the request → token mapping
-        // (used to detect task-augmented responses and keep progress handlers alive)
-        progressCallbacks[progressToken] = onProgress
-        requestProgressTokens[request.id] = progressToken
-
-        // Create timeout controller if resetTimeoutOnProgress is enabled
-        let timeoutController: TimeoutController?
-        if let timeout = options?.timeout, options?.resetTimeoutOnProgress == true {
-            let controller = TimeoutController(
-                timeout: timeout,
-                resetOnProgress: true,
-                maxTotalTimeout: options?.maxTotalTimeout
-            )
-            timeoutControllers[progressToken] = controller
-            timeoutController = controller
-        } else {
-            timeoutController = nil
-        }
-
-        // Create stream for receiving the response
-        let (stream, continuation) = AsyncThrowingStream<M.Result, Swift.Error>.makeStream()
-
         let requestId = request.id
-        let timeout = options?.timeout
-        continuation.onTermination = { @Sendable [weak self] termination in
-            Task {
-                guard let self else { return }
-                await self.cleanUpPendingRequest(id: requestId)
-                await self.removeRequestProgressToken(id: requestId)
-                await self.removeProgressCallback(token: progressToken)
-                await self.removeTimeoutController(token: progressToken)
 
-                if case .cancelled = termination {
-                    let reason = if let timeout {
-                        "Request timed out after \(timeout)"
-                    } else {
-                        "Client cancelled the request"
-                    }
-                    await self.sendCancellationNotification(
-                        requestId: requestId,
-                        reason: reason
-                    )
-                }
-            }
-        }
+        // Build protocol options with progress tracking
+        let protocolOptions = ProtocolRequestOptions(
+            progressToken: progressToken,
+            onProgress: { params in
+                let progress = Progress(
+                    value: params.progress,
+                    total: params.total,
+                    message: params.message
+                )
+                await onProgress(progress)
+            },
+            timeout: options?.timeout,
+            resetTimeoutOnProgress: options?.resetTimeoutOnProgress ?? false,
+            maxTotalTimeout: options?.maxTotalTimeout
+        )
 
-        // Add the pending request before attempting to send
-        addPendingRequest(id: request.id, continuation: continuation)
-
-        // Send the modified request data
         do {
-            try await connection.send(modifiedRequestData)
+            let responseData = try await sendProtocolRequest(
+                modifiedRequestData,
+                requestId: requestId,
+                options: protocolOptions
+            )
+
+            return try decoder.decode(M.Result.self, from: responseData)
         } catch {
-            if removePendingRequest(id: request.id) != nil {
-                continuation.finish(throwing: error)
+            // Send CancelledNotification for timeouts and task cancellations per MCP spec.
+            // Check Task.isCancelled as well since the error may propagate as
+            // MCPError.connectionClosed when the stream ends due to cancellation.
+            if error is CancellationError || Task.isCancelled {
+                await sendCancellationNotification(
+                    requestId: requestId,
+                    reason: "Client cancelled the request"
+                )
+            } else if case let .requestTimeout(t, _) = error as? MCPError {
+                await sendCancellationNotification(
+                    requestId: requestId,
+                    reason: "Request timed out after \(t)"
+                )
             }
-            removeRequestProgressToken(id: request.id)
-            removeProgressCallback(token: progressToken)
-            removeTimeoutController(token: progressToken)
             throw error
         }
-
-        // Wait for response with optional timeout
-        if let timeout {
-            // Use TimeoutController if resetTimeoutOnProgress is enabled
-            if let controller = timeoutController {
-                return try await withThrowingTaskGroup(of: M.Result.self) { group in
-                    group.addTask {
-                        for try await result in stream {
-                            return result
-                        }
-                        throw MCPError.internalError("No response received")
-                    }
-
-                    group.addTask {
-                        try await controller.waitForTimeout()
-                        throw MCPError.internalError("Unreachable - timeout should throw")
-                    }
-
-                    guard let result = try await group.next() else {
-                        throw MCPError.internalError("No response received")
-                    }
-
-                    group.cancelAll()
-                    await controller.cancel()
-                    removeProgressCallback(token: progressToken)
-                    removeTimeoutController(token: progressToken)
-                    return result
-                }
-            } else {
-                // Simple timeout without progress-aware reset
-                return try await withThrowingTaskGroup(of: M.Result.self) { group in
-                    group.addTask {
-                        for try await result in stream {
-                            return result
-                        }
-                        throw MCPError.internalError("No response received")
-                    }
-
-                    group.addTask {
-                        try await Task.sleep(for: timeout)
-                        throw MCPError.requestTimeout(timeout: timeout, message: "Request timed out")
-                    }
-
-                    guard let result = try await group.next() else {
-                        throw MCPError.internalError("No response received")
-                    }
-
-                    group.cancelAll()
-                    removeProgressCallback(token: progressToken)
-                    return result
-                }
-            }
-        } else {
-            for try await result in stream {
-                removeProgressCallback(token: progressToken)
-                removeTimeoutController(token: progressToken)
-                return result
-            }
-
-            removeProgressCallback(token: progressToken)
-            removeTimeoutController(token: progressToken)
-            throw MCPError.internalError("No response received")
-        }
-    }
-
-    /// Remove a progress callback for the given token.
-    ///
-    /// If the token is being tracked for a task (task-augmented response), the callback
-    /// is NOT removed. This keeps progress handlers alive until the task completes.
-    private func removeProgressCallback(token: ProgressToken) {
-        // Check if this token is being tracked for a task
-        // If so, don't remove the callback - it needs to stay alive until task completes
-        let isTaskProgressToken = taskProgressTokens.values.contains(token)
-        if isTaskProgressToken {
-            return
-        }
-        progressCallbacks.removeValue(forKey: token)
-    }
-
-    /// Remove a timeout controller for the given token.
-    ///
-    /// If the token is being tracked for a task (task-augmented response), the controller
-    /// is NOT removed. This keeps timeout tracking alive until the task completes.
-    private func removeTimeoutController(token: ProgressToken) {
-        // Check if this token is being tracked for a task
-        // If so, don't remove the controller - it needs to stay alive until task completes
-        let isTaskProgressToken = taskProgressTokens.values.contains(token)
-        if isTaskProgressToken {
-            return
-        }
-        timeoutControllers.removeValue(forKey: token)
-    }
-
-    /// Remove the request → progress token mapping for the given request ID.
-    private func removeRequestProgressToken(id: RequestId) {
-        requestProgressTokens.removeValue(forKey: id)
-    }
-
-    internal func addPendingRequest(
-        id: RequestId,
-        continuation: AsyncThrowingStream<some Sendable & Decodable, Swift.Error>.Continuation
-    ) {
-        pendingRequests[id] = AnyPendingRequest(continuation: continuation)
-    }
-
-    internal func removePendingRequest(id: RequestId) -> AnyPendingRequest? {
-        pendingRequests.removeValue(forKey: id)
-    }
-
-    /// Removes a pending request without returning it.
-    /// Used by onTermination handlers when the request has been cancelled.
-    internal func cleanUpPendingRequest(id: RequestId) {
-        pendingRequests.removeValue(forKey: id)
     }
 
     // MARK: - Request Cancellation
@@ -467,16 +288,12 @@ public extension Client {
     /// - Note: The `initialize` request MUST NOT be cancelled per the MCP spec.
     /// - Important: For task-augmented requests, use the `tasks/cancel` method instead.
     func cancelRequest(_ id: RequestId, reason: String? = nil) async {
-        // Remove and finish the pending request with cancellation error
-        if let pendingRequest = removePendingRequest(id: id) {
-            pendingRequest.resume(throwing: MCPError.requestCancelled(reason: reason))
-        }
-
-        // Clean up any progress-related state
-        if let progressToken = requestProgressTokens.removeValue(forKey: id) {
-            progressCallbacks.removeValue(forKey: progressToken)
-            timeoutControllers.removeValue(forKey: progressToken)
-        }
+        // Cancel pending request and clean up progress/timeout state
+        cancelProtocolPendingRequest(
+            id: id,
+            error: MCPError.requestCancelled(reason: reason)
+        )
+        cleanUpRequestProgress(requestId: id)
 
         // Send cancellation notification to server (best-effort)
         await sendCancellationNotification(requestId: id, reason: reason)
@@ -490,9 +307,9 @@ public extension Client {
     /// This is called when a client Task waiting for a response is cancelled.
     /// The notification is sent on a best-effort basis - failures are logged but not thrown.
     internal func sendCancellationNotification(requestId: RequestId, reason: String?) async {
-        guard let connection else {
-            await logger?.debug(
-                "Cannot send cancellation notification - connection is nil",
+        guard let transport = protocolState.transport else {
+            logger?.debug(
+                "Cannot send cancellation notification - not connected",
                 metadata: ["requestId": "\(requestId)"]
             )
             return
@@ -505,8 +322,8 @@ public extension Client {
 
         do {
             let notificationData = try encoder.encode(notification)
-            try await connection.send(notificationData)
-            await logger?.debug(
+            try await transport.send(notificationData)
+            logger?.debug(
                 "Sent cancellation notification",
                 metadata: [
                     "requestId": "\(requestId)",
@@ -516,7 +333,7 @@ public extension Client {
         } catch {
             // Log but don't throw - cancellation notification is best-effort
             // per MCP spec's fire-and-forget nature of notifications
-            await logger?.debug(
+            logger?.debug(
                 "Failed to send cancellation notification",
                 metadata: [
                     "requestId": "\(requestId)",

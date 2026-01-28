@@ -54,12 +54,8 @@ struct TransportSwitchingTests {
             dataStreamContinuation = nil
         }
 
-        public func send(_ data: Data) async throws {
-            sentMessages.append(SentMessage(data: data, relatedRequestId: nil))
-        }
-
-        public func send(_ data: Data, relatedRequestId: RequestId?) async throws {
-            sentMessages.append(SentMessage(data: data, relatedRequestId: relatedRequestId))
+        public func send(_ data: Data, options: TransportSendOptions) async throws {
+            sentMessages.append(SentMessage(data: data, relatedRequestId: options.relatedRequestId))
         }
 
         public func receive() -> AsyncThrowingStream<TransportMessage, Swift.Error> {

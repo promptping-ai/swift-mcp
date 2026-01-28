@@ -27,7 +27,7 @@ There are two modes:
 
 ## Form Elicitation
 
-Request structured input using ``Server/RequestHandlerContext/elicit(message:requestedSchema:)``:
+Request structured input using ``RequestHandlerContext/elicit(message:requestedSchema:)``:
 
 ```swift
 await server.withRequestHandler(CallTool.self) { params, context in

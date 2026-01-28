@@ -125,7 +125,7 @@ struct RequestMetaRelatedTaskIdTests {
 ///
 /// These tests verify that handlers have access to request context information
 /// and can make bidirectional requests, matching the TypeScript SDK's
-/// `RequestHandlerExtra` and Python SDK's `RequestContext` / `Context`.
+/// `RequestHandlerContext` and Python SDK's `RequestContext` / `Context`.
 ///
 /// Based on:
 /// - TypeScript: `packages/core/test/shared/protocol.test.ts`
@@ -136,7 +136,7 @@ struct RequestMetaRelatedTaskIdTests {
 
 // MARK: - Server RequestHandlerContext Tests
 
-@Suite("Server.RequestHandlerContext Tests")
+@Suite("RequestHandlerContext Tests (Server)")
 struct ServerRequestHandlerContextTests {
     // MARK: - requestId Tests
 
@@ -735,20 +735,20 @@ struct ServerRequestHandlerContextTests {
         await client.disconnect()
     }
 
-    // MARK: - closeSSEStream Tests
+    // MARK: - closeResponseStream Tests
 
-    /// Test that context.closeSSEStream is nil for non-HTTP transports.
-    /// Based on TypeScript SDK's `extra.closeSSEStream` which is only available for HTTP/SSE transports.
-    @Test("context.closeSSEStream is nil for InMemoryTransport")
+    /// Test that context.closeResponseStream is nil for non-HTTP transports.
+    /// Based on TypeScript SDK's `extra.closeResponseStream` which is only available for HTTP/SSE transports.
+    @Test("context.closeResponseStream is nil for InMemoryTransport")
     func testCloseSSEStreamNilForInMemoryTransport() async throws {
         let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
 
         actor StreamClosureTracker {
-            var closeSSEStreamWasNil = false
-            var closeStandaloneSSEStreamWasNil = false
+            var closeResponseStreamWasNil = false
+            var closeNotificationStreamWasNil = false
             func set(closeSSE: Bool, closeStandalone: Bool) {
-                closeSSEStreamWasNil = closeSSE
-                closeStandaloneSSEStreamWasNil = closeStandalone
+                closeResponseStreamWasNil = closeSSE
+                closeNotificationStreamWasNil = closeStandalone
             }
         }
         let tracker = StreamClosureTracker()
@@ -768,8 +768,8 @@ struct ServerRequestHandlerContextTests {
         await server.withRequestHandler(CallTool.self) { _, context in
             // Check that SSE stream closures are nil for InMemoryTransport
             await tracker.set(
-                closeSSE: context.closeSSEStream == nil,
-                closeStandalone: context.closeStandaloneSSEStream == nil
+                closeSSE: context.closeResponseStream == nil,
+                closeStandalone: context.closeNotificationStream == nil
             )
             return CallTool.Result(content: [.text("OK")])
         }
@@ -781,10 +781,10 @@ struct ServerRequestHandlerContextTests {
 
         _ = try await client.callTool(name: "test_tool", arguments: [:])
 
-        let closeSSEStreamWasNil = await tracker.closeSSEStreamWasNil
-        let closeStandaloneSSEStreamWasNil = await tracker.closeStandaloneSSEStreamWasNil
-        #expect(closeSSEStreamWasNil, "closeSSEStream should be nil for InMemoryTransport")
-        #expect(closeStandaloneSSEStreamWasNil, "closeStandaloneSSEStream should be nil for InMemoryTransport")
+        let closeResponseStreamWasNil = await tracker.closeResponseStreamWasNil
+        let closeNotificationStreamWasNil = await tracker.closeNotificationStreamWasNil
+        #expect(closeResponseStreamWasNil, "closeResponseStream should be nil for InMemoryTransport")
+        #expect(closeNotificationStreamWasNil, "closeNotificationStream should be nil for InMemoryTransport")
 
         await client.disconnect()
     }
@@ -792,7 +792,7 @@ struct ServerRequestHandlerContextTests {
 
 // MARK: - Client RequestHandlerContext Tests
 
-@Suite("Client.RequestHandlerContext Tests")
+@Suite("RequestHandlerContext Tests (Client)")
 struct ClientRequestHandlerContextTests {
     /// Test that client handlers can access context.requestId.
     @Test("Client handler can access context.requestId")

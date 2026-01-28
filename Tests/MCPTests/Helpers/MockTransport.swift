@@ -59,7 +59,7 @@ actor MockTransport: Transport {
         dataStreamContinuation = nil
     }
 
-    public func send(_ message: Data) async throws {
+    public func send(_ message: Data, options _: TransportSendOptions) async throws {
         if shouldFailSend {
             throw MCPError.transportError(POSIXError(.EIO))
         }

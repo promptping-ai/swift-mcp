@@ -59,7 +59,7 @@ public struct RequestInfo: Hashable, Sendable {
 ///
 /// For simple transports (stdio, in-memory), context is typically `nil`.
 /// For HTTP transports, context includes authentication info and SSE controls.
-public struct MessageContext: Sendable {
+public struct MessageMetadata: Sendable {
     /// Authentication information for this message's request.
     ///
     /// Contains validated access token information when using HTTP transports
@@ -80,23 +80,23 @@ public struct MessageContext: Sendable {
     ///
     /// Only available when using HTTPServerTransport with eventStore configured.
     /// Use this to implement polling behavior during long-running operations.
-    public let closeSSEStream: (@Sendable () async -> Void)?
+    public let closeResponseStream: (@Sendable () async -> Void)?
 
     /// Closes the standalone GET SSE stream, triggering client reconnection.
     ///
     /// Only available when using HTTPServerTransport with eventStore configured.
-    public let closeStandaloneSSEStream: (@Sendable () async -> Void)?
+    public let closeNotificationStream: (@Sendable () async -> Void)?
 
     public init(
         authInfo: AuthInfo? = nil,
         requestInfo: RequestInfo? = nil,
-        closeSSEStream: (@Sendable () async -> Void)? = nil,
-        closeStandaloneSSEStream: (@Sendable () async -> Void)? = nil
+        closeResponseStream: (@Sendable () async -> Void)? = nil,
+        closeNotificationStream: (@Sendable () async -> Void)? = nil
     ) {
         self.authInfo = authInfo
         self.requestInfo = requestInfo
-        self.closeSSEStream = closeSSEStream
-        self.closeStandaloneSSEStream = closeStandaloneSSEStream
+        self.closeResponseStream = closeResponseStream
+        self.closeNotificationStream = closeNotificationStream
     }
 }
 
@@ -125,11 +125,38 @@ public struct TransportMessage: Sendable {
     ///
     /// Includes authentication info, SSE stream controls, and other per-message
     /// context. For simple transports, this is `nil`.
-    public let context: MessageContext?
+    public let context: MessageMetadata?
 
-    public init(data: Data, context: MessageContext? = nil) {
+    public init(data: Data, context: MessageMetadata? = nil) {
         self.data = data
         self.context = context
+    }
+}
+
+// MARK: - Transport Send Options
+
+/// Options for sending data through a transport.
+///
+/// This struct provides extensible options for the transport `send` method,
+/// matching the TypeScript SDK's `TransportSendOptions` pattern. New options
+/// can be added here without changing the `Transport` protocol signature.
+///
+/// For simple sends without special options, use the convenience
+/// `send(_ data: Data)` extension instead.
+public struct TransportSendOptions: Sendable {
+    /// The ID of a related request, used for response routing in multiplexed transports.
+    ///
+    /// For transports that support multiplexing (like HTTP), this enables routing
+    /// responses back to the correct client connection.
+    ///
+    /// For simple transports (stdio, single-connection), this is ignored.
+    public var relatedRequestId: RequestId?
+
+    /// Creates transport send options.
+    ///
+    /// - Parameter relatedRequestId: The ID of the request this message relates to (for response routing)
+    public init(relatedRequestId: RequestId? = nil) {
+        self.relatedRequestId = relatedRequestId
     }
 }
 
@@ -164,20 +191,17 @@ public protocol Transport: Actor {
     /// Disconnects from the transport
     func disconnect() async
 
-    /// Sends data
-    func send(_ data: Data) async throws
-
-    /// Sends data with an optional related request ID for response routing.
+    /// Sends data with the specified options.
     ///
-    /// For transports that support multiplexing (like HTTP), the `relatedRequestId`
-    /// parameter enables routing responses back to the correct client connection.
+    /// For transports that support multiplexing (like HTTP), the options may include
+    /// a related request ID for routing responses back to the correct client connection.
     ///
-    /// For simple transports (stdio, single-connection), this can be ignored.
+    /// For simple transports (stdio, single-connection), options can be ignored.
     ///
     /// - Parameters:
     ///   - data: The data to send
-    ///   - relatedRequestId: The ID of the request this message relates to (for response routing)
-    func send(_ data: Data, relatedRequestId: RequestId?) async throws
+    ///   - options: Options controlling how the data is sent
+    func send(_ data: Data, options: TransportSendOptions) async throws
 
     /// Receives messages with optional context in an async sequence.
     ///
@@ -190,7 +214,7 @@ public protocol Transport: Actor {
     func receive() -> AsyncThrowingStream<TransportMessage, Swift.Error>
 }
 
-// MARK: - Default Implementation
+// MARK: - Optional Transport Methods
 
 public extension Transport {
     /// Default implementation returns `nil` for simple transports.
@@ -202,11 +226,24 @@ public extension Transport {
     /// bidirectional communication. Stateless HTTP transports override this.
     var supportsServerToClientRequests: Bool { true }
 
-    /// Default implementation that ignores the request ID.
+    /// Convenience method for sending data without options.
     ///
-    /// Simple transports (stdio, single-connection) don't need request ID routing,
-    /// so they can use this default implementation that delegates to `send(_:)`.
-    func send(_ data: Data, relatedRequestId _: RequestId?) async throws {
-        try await send(data)
+    /// Calls `send(_:options:)` with default options.
+    func send(_ data: Data) async throws {
+        try await send(data, options: TransportSendOptions())
+    }
+
+    /// Sets the negotiated protocol version on the transport.
+    ///
+    /// HTTP transports override this to include the protocol version in request headers
+    /// after initialization completes. For example, the `Mcp-Protocol-Version` header.
+    ///
+    /// This method is called by the Client after receiving the initialization response
+    /// from the server. Simple transports (stdio, in-memory) use the default no-op
+    /// implementation since they don't need version headers.
+    ///
+    /// - Parameter version: The negotiated protocol version string (e.g., "2025-03-26")
+    func setProtocolVersion(_: String) async {
+        // Default no-op implementation for transports that don't need version headers
     }
 }

@@ -167,7 +167,7 @@ Report progress back to the server:
 ```swift
 await client.withSamplingHandler { params, context in
     if let token = context._meta?.progressToken {
-        try await context.sendProgressNotification(
+        try await context.sendProgress(
             token: token,
             progress: 50.0,
             total: 100.0,

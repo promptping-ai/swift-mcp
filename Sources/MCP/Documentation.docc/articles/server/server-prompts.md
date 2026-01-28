@@ -221,10 +221,14 @@ Prompt.Message.user(.resource(uri: "file:///data.json", mimeType: "application/j
 
 ## Notifying Changes
 
-``MCPServer`` automatically sends list change notifications when prompts are registered, enabled, disabled, or removed. You can also send manually:
+``MCPServer`` automatically sends list change notifications when prompts are registered, enabled, disabled, or removed. To send manually:
 
 ```swift
-await server.sendPromptListChanged()
+// From within a request handler
+try await context.sendPromptListChanged()
+
+// From outside a handler (low-level Server)
+try await server.sendPromptListChanged()
 ```
 
 ## Complete Example

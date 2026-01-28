@@ -175,7 +175,7 @@ The return value is discardable if you don't need to inspect capabilities immedi
 After connecting, you can retrieve server capabilities at any time:
 
 ```swift
-if let capabilities = await client.getServerCapabilities() {
+if let capabilities = await client.serverCapabilities {
     if capabilities.resources?.subscribe == true {
         print("Server supports resource subscriptions")
     }

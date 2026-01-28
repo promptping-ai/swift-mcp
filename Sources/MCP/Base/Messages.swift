@@ -48,11 +48,11 @@ public protocol Method: Sendable {
     static var name: String { get }
 }
 
-/// Type-erased method for request/response handling
-struct AnyMethod: Method, Sendable {
-    static var name: String { "" }
-    typealias Parameters = Value
-    typealias Result = Value
+/// Type-erased method for request/response handling.
+public struct AnyMethod: Method, Sendable {
+    public static var name: String { "" }
+    public typealias Parameters = Value
+    public typealias Result = Value
 }
 
 public extension Method where Parameters == Empty {
@@ -175,8 +175,8 @@ public extension Request {
     }
 }
 
-/// A type-erased request for request/response handling
-typealias AnyRequest = Request<AnyMethod>
+/// A type-erased request for request/response handling.
+public typealias AnyRequest = Request<AnyMethod>
 
 extension AnyRequest {
     init(_ request: Request<some Method>) throws {
@@ -196,7 +196,7 @@ extension AnyRequest {
 /// - No mutable state exists in either class after initialization
 /// - The closure is `let` and marked `@Sendable`
 class RequestHandlerBox: @unchecked Sendable {
-    func callAsFunction(_: AnyRequest, context _: Server.RequestHandlerContext) async throws -> AnyResponse {
+    func callAsFunction(_: AnyRequest, context _: RequestHandlerContext) async throws -> AnyResponse {
         fatalError("Must override")
     }
 }
@@ -205,14 +205,14 @@ class RequestHandlerBox: @unchecked Sendable {
 ///
 /// See `RequestHandlerBox` for why `@unchecked Sendable` is safe here.
 final class TypedRequestHandler<M: Method>: RequestHandlerBox, @unchecked Sendable {
-    private let _handle: @Sendable (Request<M>, Server.RequestHandlerContext) async throws -> Response<M>
+    private let _handle: @Sendable (Request<M>, RequestHandlerContext) async throws -> Response<M>
 
-    init(_ handler: @escaping @Sendable (Request<M>, Server.RequestHandlerContext) async throws -> Response<M>) {
+    init(_ handler: @escaping @Sendable (Request<M>, RequestHandlerContext) async throws -> Response<M>) {
         _handle = handler
         super.init()
     }
 
-    override func callAsFunction(_ request: AnyRequest, context: Server.RequestHandlerContext) async throws -> AnyResponse {
+    override func callAsFunction(_ request: AnyRequest, context: RequestHandlerContext) async throws -> AnyResponse {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
 
@@ -293,8 +293,8 @@ public struct Response<M: Method>: Hashable, Identifiable, Codable, Sendable {
     }
 }
 
-/// A type-erased response for request/response handling
-typealias AnyResponse = Response<AnyMethod>
+/// A type-erased response for response handling.
+public typealias AnyResponse = Response<AnyMethod>
 
 extension AnyResponse {
     init(_ response: Response<some Method>) throws {
@@ -320,10 +320,10 @@ public protocol Notification: Hashable, Codable, Sendable {
     static var name: String { get }
 }
 
-/// A type-erased notification for message handling
-struct AnyNotification: Notification, Sendable {
-    static var name: String { "" }
-    typealias Parameters = Value
+/// A type-erased notification for message handling.
+public struct AnyNotification: Notification, Sendable {
+    public static var name: String { "" }
+    public typealias Parameters = Value
 }
 
 /// Protocol for type-erased notification messages.
@@ -412,8 +412,8 @@ public struct Message<N: Notification>: NotificationMessageProtocol, Hashable, C
     }
 }
 
-/// A type-erased message for message handling
-typealias AnyMessage = Message<AnyNotification>
+/// A type-erased message for message handling.
+public typealias AnyMessage = Message<AnyNotification>
 
 public extension Notification where Parameters == Empty {
     /// Create a message with empty parameters.
@@ -479,7 +479,7 @@ final class TypedNotificationHandler<N: Notification>: NotificationHandlerBox,
 /// - No mutable state exists in either class after initialization
 /// - The closure is `let` and marked `@Sendable`
 class ClientRequestHandlerBox: @unchecked Sendable {
-    func callAsFunction(_: AnyRequest, context _: Client.RequestHandlerContext) async throws -> AnyResponse {
+    func callAsFunction(_: AnyRequest, context _: RequestHandlerContext) async throws -> AnyResponse {
         fatalError("Must override")
     }
 }
@@ -488,14 +488,14 @@ class ClientRequestHandlerBox: @unchecked Sendable {
 ///
 /// See `ClientRequestHandlerBox` for why `@unchecked Sendable` is safe here.
 final class TypedClientRequestHandler<M: Method>: ClientRequestHandlerBox, @unchecked Sendable {
-    private let _handle: @Sendable (M.Parameters, Client.RequestHandlerContext) async throws -> M.Result
+    private let _handle: @Sendable (M.Parameters, RequestHandlerContext) async throws -> M.Result
 
-    init(_ handler: @escaping @Sendable (M.Parameters, Client.RequestHandlerContext) async throws -> M.Result) {
+    init(_ handler: @escaping @Sendable (M.Parameters, RequestHandlerContext) async throws -> M.Result) {
         _handle = handler
         super.init()
     }
 
-    override func callAsFunction(_ request: AnyRequest, context: Client.RequestHandlerContext) async throws -> AnyResponse {
+    override func callAsFunction(_ request: AnyRequest, context: RequestHandlerContext) async throws -> AnyResponse {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
 

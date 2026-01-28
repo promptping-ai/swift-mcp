@@ -257,7 +257,7 @@ public actor ProgressTracker {
     public let total: Double?
 
     /// The request handler context for sending notifications.
-    private let context: Server.RequestHandlerContext
+    private let context: RequestHandlerContext
 
     /// The current cumulative progress value.
     public private(set) var current: Double = 0
@@ -271,7 +271,7 @@ public actor ProgressTracker {
     public init(
         token: ProgressToken,
         total: Double? = nil,
-        context: Server.RequestHandlerContext
+        context: RequestHandlerContext
     ) {
         self.token = token
         self.total = total

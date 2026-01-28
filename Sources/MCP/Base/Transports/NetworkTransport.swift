@@ -477,9 +477,11 @@ public actor NetworkTransport: Transport {
     /// This sends a JSON-RPC message through the NWConnection, adding a newline
     /// delimiter to mark the end of the message.
     ///
-    /// - Parameter message: The JSON-RPC message to send
+    /// - Parameters:
+    ///   - message: The JSON-RPC message to send
+    ///   - options: Transport send options (ignored for network transport)
     /// - Throws: MCPError for transport failures or connection issues
-    public func send(_ message: Data) async throws {
+    public func send(_ message: Data, options _: TransportSendOptions) async throws {
         guard isConnected else {
             throw MCPError.internalError("Transport not connected")
         }

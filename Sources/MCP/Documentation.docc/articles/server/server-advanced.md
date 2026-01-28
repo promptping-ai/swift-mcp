@@ -155,7 +155,7 @@ await server.withRequestHandler(ResourceUnsubscribe.self) { params, _ in
 // Notify subscribers when content changes
 func onResourceChanged(uri: String) async throws {
     if subscriptions.contains(uri) {
-        try await server.notify(ResourceUpdatedNotification.message(uri: uri))
+        try await server.sendResourceUpdated(uri: uri)
     }
 }
 ```
@@ -420,4 +420,4 @@ await server.waitUntilCompleted()
 - <doc:server-prompts>
 - ``Server``
 - ``MCPServer``
-- ``Server/RequestHandlerContext``
+- ``RequestHandlerContext``

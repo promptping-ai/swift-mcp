@@ -11,9 +11,6 @@ public extension Server {
             throw MCPError.internalError("Server connection not initialized")
         }
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-
         let responseData = try encoder.encode(response)
         try await connection.send(responseData)
     }
@@ -23,9 +20,6 @@ public extension Server {
         guard let connection else {
             throw MCPError.internalError("Server connection not initialized")
         }
-
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
 
         let notificationData = try encoder.encode(notification)
         try await connection.send(notificationData)
@@ -64,5 +58,56 @@ public extension Server {
             logger: logger,
             data: data
         )))
+    }
+
+    // MARK: - List Changed Notifications
+
+    /// Send a resource list changed notification to connected clients.
+    ///
+    /// Call this when the set of available resources has changed (resources added or removed).
+    ///
+    /// - Throws: `MCPError` if the server does not have the resources capability declared.
+    func sendResourceListChanged() async throws {
+        guard capabilities.resources != nil else {
+            throw MCPError.internalError("Server does not support resources capability (required for notifications/resources/list_changed)")
+        }
+        try await notify(ResourceListChangedNotification.message())
+    }
+
+    /// Send a resource updated notification to connected clients.
+    ///
+    /// Call this when the contents of a specific resource have changed.
+    ///
+    /// - Parameter uri: The URI of the resource that was updated.
+    /// - Throws: `MCPError` if the server does not have the resources capability declared.
+    func sendResourceUpdated(uri: String) async throws {
+        guard capabilities.resources != nil else {
+            throw MCPError.internalError("Server does not support resources capability (required for notifications/resources/updated)")
+        }
+        try await notify(ResourceUpdatedNotification.message(.init(uri: uri)))
+    }
+
+    /// Send a tool list changed notification to connected clients.
+    ///
+    /// Call this when the set of available tools has changed (tools added or removed).
+    ///
+    /// - Throws: `MCPError` if the server does not have the tools capability declared.
+    func sendToolListChanged() async throws {
+        guard capabilities.tools != nil else {
+            throw MCPError.internalError("Server does not support tools capability (required for notifications/tools/list_changed)")
+        }
+        try await notify(ToolListChangedNotification.message())
+    }
+
+    /// Send a prompt list changed notification to connected clients.
+    ///
+    /// Call this when the set of available prompts has changed (prompts added or removed).
+    ///
+    /// - Throws: `MCPError` if the server does not have the prompts capability declared.
+    func sendPromptListChanged() async throws {
+        guard capabilities.prompts != nil else {
+            throw MCPError.internalError("Server does not support prompts capability (required for notifications/prompts/list_changed)")
+        }
+        try await notify(PromptListChangedNotification.message())
     }
 }

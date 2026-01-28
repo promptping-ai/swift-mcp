@@ -923,3 +923,287 @@ struct TasksCapabilityEncodingTests {
         #expect(decoded.tasks?.cancel != nil)
     }
 }
+
+// MARK: - Notification Capability Validation Tests
+
+@Suite("Notification Capability Validation Tests")
+struct NotificationCapabilityValidationTests {
+    /// Actor to track errors in a Sendable-compatible way.
+    private actor ErrorTracker {
+        var capturedError: (any Error)?
+        func capture(_ error: any Error) { capturedError = error }
+        func getError() -> (any Error)? { capturedError }
+    }
+
+    /// Test that sendResourceListChanged throws when resources capability is not declared.
+    @Test("sendResourceListChanged throws without resources capability")
+    func sendResourceListChangedThrowsWithoutCapability() async throws {
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+
+        // Server WITHOUT resources capability
+        let server = Server(
+            name: "NoResourcesServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        let errorTracker = ErrorTracker()
+
+        await server.withRequestHandler(ListTools.self) { _, _ in
+            ListTools.Result(tools: [
+                Tool(name: "test_notify", inputSchema: ["type": "object"]),
+            ])
+        }
+
+        await server.withRequestHandler(CallTool.self) { [errorTracker] _, context in
+            do {
+                try await context.sendResourceListChanged()
+                return CallTool.Result(content: [.text("Should not reach here")])
+            } catch {
+                await errorTracker.capture(error)
+                return CallTool.Result(content: [.text("Error: \(error)")], isError: true)
+            }
+        }
+
+        try await server.start(transport: serverTransport)
+
+        let client = Client(name: "TestClient", version: "1.0.0")
+        try await client.connect(transport: clientTransport)
+
+        _ = try await client.callTool(name: "test_notify", arguments: [:])
+
+        let thrownError = await errorTracker.getError()
+        #expect(thrownError != nil, "Should have thrown an error")
+        if let mcpError = thrownError as? MCPError {
+            let description = String(describing: mcpError)
+            #expect(description.contains("resources"), "Error should mention resources capability")
+        }
+
+        await client.disconnect()
+        await server.stop()
+    }
+
+    /// Test that sendResourceUpdated throws when resources capability is not declared.
+    @Test("sendResourceUpdated throws without resources capability")
+    func sendResourceUpdatedThrowsWithoutCapability() async throws {
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+
+        // Server WITHOUT resources capability
+        let server = Server(
+            name: "NoResourcesServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        let errorTracker = ErrorTracker()
+
+        await server.withRequestHandler(ListTools.self) { _, _ in
+            ListTools.Result(tools: [
+                Tool(name: "test_notify", inputSchema: ["type": "object"]),
+            ])
+        }
+
+        await server.withRequestHandler(CallTool.self) { [errorTracker] _, context in
+            do {
+                try await context.sendResourceUpdated(uri: "file:///test.txt")
+                return CallTool.Result(content: [.text("Should not reach here")])
+            } catch {
+                await errorTracker.capture(error)
+                return CallTool.Result(content: [.text("Error: \(error)")], isError: true)
+            }
+        }
+
+        try await server.start(transport: serverTransport)
+
+        let client = Client(name: "TestClient", version: "1.0.0")
+        try await client.connect(transport: clientTransport)
+
+        _ = try await client.callTool(name: "test_notify", arguments: [:])
+
+        let thrownError = await errorTracker.getError()
+        #expect(thrownError != nil, "Should have thrown an error")
+        if let mcpError = thrownError as? MCPError {
+            let description = String(describing: mcpError)
+            #expect(description.contains("resources"), "Error should mention resources capability")
+        }
+
+        await client.disconnect()
+        await server.stop()
+    }
+
+    /// Test that sendToolListChanged throws when tools capability is not declared.
+    @Test("sendToolListChanged throws without tools capability")
+    func sendToolListChangedThrowsWithoutCapability() async throws {
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+
+        // Server WITHOUT tools capability (only prompts)
+        let server = Server(
+            name: "NoToolsServer",
+            version: "1.0.0",
+            capabilities: .init(prompts: .init())
+        )
+
+        let errorTracker = ErrorTracker()
+
+        await server.withRequestHandler(ListPrompts.self) { _, _ in
+            ListPrompts.Result(prompts: [
+                Prompt(name: "test_prompt"),
+            ])
+        }
+
+        await server.withRequestHandler(GetPrompt.self) { [errorTracker] _, context in
+            do {
+                try await context.sendToolListChanged()
+                return GetPrompt.Result(description: nil, messages: [])
+            } catch {
+                await errorTracker.capture(error)
+                return GetPrompt.Result(description: nil, messages: [])
+            }
+        }
+
+        try await server.start(transport: serverTransport)
+
+        let client = Client(name: "TestClient", version: "1.0.0")
+        try await client.connect(transport: clientTransport)
+
+        _ = try await client.getPrompt(name: "test_prompt")
+
+        let thrownError = await errorTracker.getError()
+        #expect(thrownError != nil, "Should have thrown an error")
+        if let mcpError = thrownError as? MCPError {
+            let description = String(describing: mcpError)
+            #expect(description.contains("tools"), "Error should mention tools capability")
+        }
+
+        await client.disconnect()
+        await server.stop()
+    }
+
+    /// Test that sendPromptListChanged throws when prompts capability is not declared.
+    @Test("sendPromptListChanged throws without prompts capability")
+    func sendPromptListChangedThrowsWithoutCapability() async throws {
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+
+        // Server WITHOUT prompts capability
+        let server = Server(
+            name: "NoPromptsServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        let errorTracker = ErrorTracker()
+
+        await server.withRequestHandler(ListTools.self) { _, _ in
+            ListTools.Result(tools: [
+                Tool(name: "test_notify", inputSchema: ["type": "object"]),
+            ])
+        }
+
+        await server.withRequestHandler(CallTool.self) { [errorTracker] _, context in
+            do {
+                try await context.sendPromptListChanged()
+                return CallTool.Result(content: [.text("Should not reach here")])
+            } catch {
+                await errorTracker.capture(error)
+                return CallTool.Result(content: [.text("Error: \(error)")], isError: true)
+            }
+        }
+
+        try await server.start(transport: serverTransport)
+
+        let client = Client(name: "TestClient", version: "1.0.0")
+        try await client.connect(transport: clientTransport)
+
+        _ = try await client.callTool(name: "test_notify", arguments: [:])
+
+        let thrownError = await errorTracker.getError()
+        #expect(thrownError != nil, "Should have thrown an error")
+        if let mcpError = thrownError as? MCPError {
+            let description = String(describing: mcpError)
+            #expect(description.contains("prompts"), "Error should mention prompts capability")
+        }
+
+        await client.disconnect()
+        await server.stop()
+    }
+
+    /// Test that Server.sendResourceListChanged throws when resources capability is not declared.
+    @Test("Server.sendResourceListChanged throws without resources capability")
+    func serverSendResourceListChangedThrowsWithoutCapability() async throws {
+        // Server WITHOUT resources capability
+        let server = Server(
+            name: "NoResourcesServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        do {
+            try await server.sendResourceListChanged()
+            Issue.record("Should have thrown an error")
+        } catch {
+            #expect(error is MCPError, "Should throw MCPError")
+            let description = String(describing: error)
+            #expect(description.contains("resources"), "Error should mention resources capability")
+        }
+    }
+
+    /// Test that Server.sendResourceUpdated throws when resources capability is not declared.
+    @Test("Server.sendResourceUpdated throws without resources capability")
+    func serverSendResourceUpdatedThrowsWithoutCapability() async throws {
+        // Server WITHOUT resources capability
+        let server = Server(
+            name: "NoResourcesServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        do {
+            try await server.sendResourceUpdated(uri: "file:///test.txt")
+            Issue.record("Should have thrown an error")
+        } catch {
+            #expect(error is MCPError, "Should throw MCPError")
+            let description = String(describing: error)
+            #expect(description.contains("resources"), "Error should mention resources capability")
+        }
+    }
+
+    /// Test that Server.sendToolListChanged throws when tools capability is not declared.
+    @Test("Server.sendToolListChanged throws without tools capability")
+    func serverSendToolListChangedThrowsWithoutCapability() async throws {
+        // Server WITHOUT tools capability
+        let server = Server(
+            name: "NoToolsServer",
+            version: "1.0.0",
+            capabilities: .init(prompts: .init())
+        )
+
+        do {
+            try await server.sendToolListChanged()
+            Issue.record("Should have thrown an error")
+        } catch {
+            #expect(error is MCPError, "Should throw MCPError")
+            let description = String(describing: error)
+            #expect(description.contains("tools"), "Error should mention tools capability")
+        }
+    }
+
+    /// Test that Server.sendPromptListChanged throws when prompts capability is not declared.
+    @Test("Server.sendPromptListChanged throws without prompts capability")
+    func serverSendPromptListChangedThrowsWithoutCapability() async throws {
+        // Server WITHOUT prompts capability
+        let server = Server(
+            name: "NoPromptsServer",
+            version: "1.0.0",
+            capabilities: .init(tools: .init())
+        )
+
+        do {
+            try await server.sendPromptListChanged()
+            Issue.record("Should have thrown an error")
+        } catch {
+            #expect(error is MCPError, "Should throw MCPError")
+            let description = String(describing: error)
+            #expect(description.contains("prompts"), "Error should mention prompts capability")
+        }
+    }
+}

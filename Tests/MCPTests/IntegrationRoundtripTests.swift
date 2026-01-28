@@ -455,7 +455,7 @@ struct IntegrationRoundtripTests {
                 let message = "Step \(step)/\(steps): Processing..."
 
                 // Send progress notification using sendMessage
-                try await context.sendMessage(ProgressNotification.message(.init(
+                try await context.sendNotification(ProgressNotification.message(.init(
                     progressToken: .string("progress-token"),
                     progress: progress,
                     total: 1.0,
@@ -822,22 +822,22 @@ struct IntegrationRoundtripTests {
             let data = request.arguments?["data"]?.stringValue ?? ""
 
             // Send log messages at different levels using sendMessage
-            try await context.sendMessage(LogMessageNotification.message(.init(
+            try await context.sendNotification(LogMessageNotification.message(.init(
                 level: .debug,
                 logger: "process",
                 data: .string("Starting to process data")
             )))
-            try await context.sendMessage(LogMessageNotification.message(.init(
+            try await context.sendNotification(LogMessageNotification.message(.init(
                 level: .info,
                 logger: "process",
                 data: .string("Processing: \(data)")
             )))
-            try await context.sendMessage(LogMessageNotification.message(.init(
+            try await context.sendNotification(LogMessageNotification.message(.init(
                 level: .warning,
                 logger: "process",
                 data: .string("Data contains special characters")
             )))
-            try await context.sendMessage(LogMessageNotification.message(.init(
+            try await context.sendNotification(LogMessageNotification.message(.init(
                 level: .error,
                 logger: "process",
                 data: .string("Simulated error for testing")

@@ -15,12 +15,11 @@ public extension Client {
 
     /// Send a notification to the server
     func notify(_ notification: Message<some Notification>) async throws {
-        guard let connection else {
+        guard isProtocolConnected else {
             throw MCPError.internalError("Client connection not initialized")
         }
 
-        let notificationData = try encoder.encode(notification)
-        try await connection.send(notificationData)
+        try await sendProtocolNotification(notification)
     }
 
     /// Send a progress notification to the server.
@@ -82,7 +81,7 @@ public extension Client {
     ///
     /// The handler receives a `RequestHandlerContext` that provides:
     /// - `isCancelled` and `checkCancellation()` for responding to cancellation
-    /// - `sendProgressNotification()` for reporting progress back to the server
+    /// - `sendProgress()` for reporting progress back to the server
     ///
     /// ## Example
     ///

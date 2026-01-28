@@ -17,12 +17,12 @@ extension Server {
     }
 
     /// Process a batch of requests and/or notifications
-    func handleBatch(_ batch: Batch, messageContext: MessageContext? = nil) async throws {
+    func handleBatch(_ batch: Batch, messageContext: MessageMetadata? = nil) async throws {
         // Capture the connection at batch start.
         // This ensures all batch responses go to the correct client.
         let capturedConnection = connection
 
-        await logger?.trace("Processing batch request", metadata: ["size": "\(batch.items.count)"])
+        logger?.trace("Processing batch request", metadata: ["size": "\(batch.items.count)"])
 
         if batch.items.isEmpty {
             // Empty batch is invalid according to JSON-RPC spec
@@ -30,8 +30,6 @@ extension Server {
             let response = AnyMethod.response(id: .random, error: error)
             // Use captured connection for error response
             if let connection = capturedConnection {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
                 let responseData = try encoder.encode(response)
                 try await connection.send(responseData)
             }
@@ -60,7 +58,7 @@ extension Server {
                     // Log full error for debugging, but sanitize for client response.
                     // Only log non-MCP errors since MCP errors are expected/user-facing.
                     if !(error is MCPError) {
-                        await logger?.error("Error handling batch item", metadata: ["error": "\(error)"])
+                        logger?.error("Error handling batch item", metadata: ["error": "\(error)"])
                     }
                     let mcpError =
                         error as? MCPError ?? MCPError.internalError("An internal error occurred")
@@ -72,14 +70,11 @@ extension Server {
         // Send collected responses if any (using captured connection)
         if !responses.isEmpty {
             guard let connection = capturedConnection else {
-                await logger?.warning("Cannot send batch response - connection was nil at batch start")
+                logger?.warning("Cannot send batch response - connection was nil at batch start")
                 return
             }
 
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             let responseData = try encoder.encode(responses)
-
             try await connection.send(responseData)
         }
     }
@@ -120,11 +115,11 @@ extension Server {
         /// Closure to close the SSE stream for this request.
         ///
         /// Only set by HTTP transports with SSE support.
-        let closeSSEStream: (@Sendable () async -> Void)?
+        let closeResponseStream: (@Sendable () async -> Void)?
         /// Closure to close the standalone SSE stream.
         ///
         /// Only set by HTTP transports with SSE support.
-        let closeStandaloneSSEStream: (@Sendable () async -> Void)?
+        let closeNotificationStream: (@Sendable () async -> Void)?
     }
 
     /// Extract `_meta` from request parameters if present.
@@ -137,38 +132,12 @@ extension Server {
             return nil
         }
         // Decode the _meta value as RequestMeta
-        let encoder = JSONEncoder()
-        let decoder = JSONDecoder()
         guard let data = try? encoder.encode(metaValue),
               let meta = try? decoder.decode(RequestMeta.self, from: data)
         else {
             return nil
         }
         return meta
-    }
-
-    /// Wrapper for encoding type-erased notifications as JSON-RPC messages.
-    private struct NotificationWrapper: Encodable {
-        let jsonrpc = "2.0"
-        let method: String
-        let params: Value
-
-        init(notification: any Notification) {
-            method = type(of: notification).name
-
-            // Encode the notification's params to Value
-            // Since Notification is Codable, we encode it and extract the params field
-            let encoder = JSONEncoder()
-            let decoder = JSONDecoder()
-            if let data = try? encoder.encode(notification),
-               let dict = try? decoder.decode([String: Value].self, from: data),
-               let params = dict["params"]
-            {
-                self.params = params
-            } else {
-                params = .object([:])
-            }
-        }
     }
 
     /// Send a response using the captured request context.
@@ -178,18 +147,15 @@ extension Server {
     /// 2. Passing the request ID so multiplexing transports can route correctly
     func send(_ response: Response<some Method>, using context: RequestContext) async throws {
         guard let connection = context.capturedConnection else {
-            await logger?.warning(
+            logger?.warning(
                 "Cannot send response - connection was nil at request time",
                 metadata: ["requestId": "\(context.requestId)"]
             )
             return
         }
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-
         let responseData = try encoder.encode(response)
-        try await connection.send(responseData, relatedRequestId: context.requestId)
+        try await connection.send(responseData, options: TransportSendOptions(relatedRequestId: context.requestId))
     }
 
     /// Handle a request and either send the response immediately or return it
@@ -199,7 +165,7 @@ extension Server {
     ///   - sendResponse: Whether to send the response immediately (true) or return it (false)
     ///   - messageContext: Optional context from the transport message (authInfo, SSE closures)
     /// - Returns: The response when sendResponse is false
-    func handleRequest(_ request: Request<AnyMethod>, sendResponse: Bool = true, messageContext: MessageContext? = nil)
+    func handleRequest(_ request: Request<AnyMethod>, sendResponse: Bool = true, messageContext: MessageMetadata? = nil)
         async throws -> Response<AnyMethod>?
     {
         // Capture the connection and session ID at request time.
@@ -209,11 +175,11 @@ extension Server {
         let requestMeta = extractMeta(from: request.params)
 
         // Extract context from transport message (set by HTTP transports with per-message context)
-        // This pattern aligns with TypeScript's onmessage(message, { authInfo, requestInfo, closeSSEStream, ... })
+        // This pattern aligns with TypeScript's onmessage(message, { authInfo, requestInfo, closeResponseStream, ... })
         let authInfo = messageContext?.authInfo
         let requestInfo = messageContext?.requestInfo
-        let closeSSEStream = messageContext?.closeSSEStream
-        let closeStandaloneSSEStream = messageContext?.closeStandaloneSSEStream
+        let closeResponseStream = messageContext?.closeResponseStream
+        let closeNotificationStream = messageContext?.closeNotificationStream
 
         let context = await RequestContext(
             capturedConnection: capturedConnection,
@@ -222,8 +188,8 @@ extension Server {
             meta: requestMeta,
             authInfo: authInfo,
             requestInfo: requestInfo,
-            closeSSEStream: closeSSEStream,
-            closeStandaloneSSEStream: closeStandaloneSSEStream
+            closeResponseStream: closeResponseStream,
+            closeNotificationStream: closeNotificationStream
         )
 
         // Check if this is a pre-processed error request (empty method)
@@ -235,7 +201,7 @@ extension Server {
             )
         }
 
-        await logger?.trace(
+        logger?.trace(
             "Processing request",
             metadata: [
                 "method": "\(request.method)",
@@ -279,104 +245,57 @@ extension Server {
             return response
         }
 
-        // Create the public handler context with sendNotification capability
+        // Create the handler context (RequestHandlerContext)
         let handlerContext = RequestHandlerContext(
-            sendNotification: { [context] notification in
+            sessionId: context.sessionId,
+            requestId: context.requestId,
+            _meta: context.meta,
+            taskId: context.meta?.relatedTaskId,
+            authInfo: context.authInfo,
+            requestInfo: context.requestInfo,
+            closeResponseStream: context.closeResponseStream,
+            closeNotificationStream: context.closeNotificationStream,
+            sendNotification: { [weak self, context] message in
+                guard let self else {
+                    throw MCPError.internalError("Server was deallocated")
+                }
                 guard let connection = context.capturedConnection else {
                     throw MCPError.internalError("Cannot send notification - connection was nil at request time")
                 }
-
-                // Wrap the notification in a JSON-RPC message structure
-                let wrapper = NotificationWrapper(notification: notification)
-
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-
-                let notificationData = try encoder.encode(wrapper)
-                try await connection.send(notificationData, relatedRequestId: context.requestId)
-            },
-            sendMessage: { [context] message in
-                guard let connection = context.capturedConnection else {
-                    throw MCPError.internalError("Cannot send notification - connection was nil at request time")
-                }
-
-                // Message<N> already encodes to JSON-RPC format with method and params
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
 
                 let messageData = try encoder.encode(message)
-                try await connection.send(messageData, relatedRequestId: context.requestId)
+                try await connection.send(messageData, options: TransportSendOptions(relatedRequestId: context.requestId))
+            },
+            sendRequest: { [weak self, context] requestData in
+                guard let self else {
+                    throw MCPError.internalError("Server was deallocated")
+                }
+                guard let capturedConnection = context.capturedConnection else {
+                    throw MCPError.internalError("Cannot send request - connection was nil at request time")
+                }
+
+                // Delegate to protocol for request tracking and response matching,
+                // using a send override to route through the captured connection
+                // for correct HTTP client routing.
+                return try await sendProtocolRequestData(
+                    requestData,
+                    relatedRequestId: context.requestId,
+                    sendOverride: { data, relatedId in
+                        try await capturedConnection.send(data, options: TransportSendOptions(relatedRequestId: relatedId))
+                    }
+                )
             },
             sendData: { [context] data in
                 guard let connection = context.capturedConnection else {
                     throw MCPError.internalError("Cannot send data - connection was nil at request time")
                 }
-
-                // Send raw data (used for queued task messages)
-                try await connection.send(data, relatedRequestId: context.requestId)
+                try await connection.send(data, options: TransportSendOptions(relatedRequestId: context.requestId))
             },
-            sessionId: context.sessionId,
-            requestId: context.requestId,
-            _meta: context.meta,
-            authInfo: context.authInfo,
-            requestInfo: context.requestInfo,
-            closeSSEStream: context.closeSSEStream,
-            closeStandaloneSSEStream: context.closeStandaloneSSEStream,
             shouldSendLogMessage: { [weak self, context] level in
                 guard let self else { return true }
                 return await shouldSendLogMessage(at: level, forSession: context.sessionId)
             },
-            sendRequest: { [weak self, context] requestData in
-                guard let self else {
-                    throw MCPError.internalError("Server reference lost")
-                }
-                guard let connection = context.capturedConnection else {
-                    throw MCPError.internalError("Cannot send request - connection was nil at request time")
-                }
-
-                // Parse the request to get its ID
-                guard let jsonObject = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any],
-                      let requestId = jsonObject["id"]
-                else {
-                    throw MCPError.invalidParams("Could not parse request ID")
-                }
-
-                // Convert request ID to RequestId type
-                let typedRequestId: RequestId
-                if let numId = requestId as? Int {
-                    typedRequestId = .number(numId)
-                } else if let strId = requestId as? String {
-                    typedRequestId = .string(strId)
-                } else {
-                    throw MCPError.invalidParams("Invalid request ID type")
-                }
-
-                // Create stream for receiving the response
-                let (stream, continuation) = AsyncThrowingStream<Data, Swift.Error>.makeStream()
-
-                continuation.onTermination = { @Sendable [weak self] _ in
-                    Task { await self?.cleanUpPendingRequest(id: typedRequestId) }
-                }
-
-                // Register the pending request
-                await registerContextRequest(id: typedRequestId, continuation: continuation)
-
-                // Send the request using captured connection
-                do {
-                    try await connection.send(requestData, relatedRequestId: context.requestId)
-                } catch {
-                    await cleanUpPendingRequest(id: typedRequestId)
-                    continuation.finish(throwing: error)
-                    throw error
-                }
-
-                // Wait for response
-                for try await result in stream {
-                    return result
-                }
-
-                throw MCPError.internalError("No response received from client")
-            }
+            serverCapabilities: capabilities
         )
 
         do {
@@ -387,7 +306,7 @@ extension Server {
             // "Receivers of a cancellation notification SHOULD... Not send a response
             // for the cancelled request")
             if Task.isCancelled {
-                await logger?.debug(
+                logger?.debug(
                     "Request cancelled, suppressing response",
                     metadata: ["id": "\(request.id)"]
                 )
@@ -403,7 +322,7 @@ extension Server {
         } catch {
             // Also check cancellation on error path - don't send error response if cancelled
             if Task.isCancelled {
-                await logger?.debug(
+                logger?.debug(
                     "Request cancelled during error handling, suppressing response",
                     metadata: ["id": "\(request.id)"]
                 )
@@ -412,7 +331,7 @@ extension Server {
 
             // Log full error for debugging, but sanitize for client response
             if !(error is MCPError) {
-                await logger?.error("Request handler error", metadata: ["error": "\(error)"])
+                logger?.error("Request handler error", metadata: ["error": "\(error)"])
             }
             let mcpError = error as? MCPError ?? MCPError.internalError("An internal error occurred")
             let response: Response<AnyMethod> = AnyMethod.response(id: request.id, error: mcpError)
@@ -427,7 +346,7 @@ extension Server {
     }
 
     func handleMessage(_ message: Message<AnyNotification>) async throws {
-        await logger?.trace(
+        logger?.trace(
             "Processing notification",
             metadata: ["method": "\(message.method)"]
         )
@@ -436,7 +355,7 @@ extension Server {
         // For notifications (unlike requests), we log and ignore since no response is expected.
         if configuration.strict {
             if message.method != InitializedNotification.name, !isInitialized {
-                await logger?.warning(
+                logger?.warning(
                     "Ignoring notification before initialization",
                     metadata: ["method": "\(message.method)"]
                 )
@@ -452,7 +371,7 @@ extension Server {
             do {
                 try await handler(message)
             } catch {
-                await logger?.error(
+                logger?.error(
                     "Error handling notification",
                     metadata: [
                         "method": "\(message.method)",
@@ -463,56 +382,6 @@ extension Server {
         }
     }
 
-    /// Handle a response from the client (for server→client requests).
-    func handleClientResponse(_ response: Response<AnyMethod>) async {
-        await logger?.trace(
-            "Processing client response",
-            metadata: ["id": "\(response.id)"]
-        )
-
-        // Check response routers first (e.g., for task-related responses)
-        for router in responseRouters {
-            switch response.result {
-                case let .success(value):
-                    if await router.routeResponse(requestId: response.id, response: value) {
-                        await logger?.trace(
-                            "Response routed via router",
-                            metadata: ["id": "\(response.id)"]
-                        )
-                        return
-                    }
-                case let .failure(error):
-                    if await router.routeError(requestId: response.id, error: error) {
-                        await logger?.trace(
-                            "Error routed via router",
-                            metadata: ["id": "\(response.id)"]
-                        )
-                        return
-                    }
-            }
-        }
-
-        // Fall back to normal pending request handling
-        if let pendingRequest = pendingRequests.removeValue(forKey: response.id) {
-            switch response.result {
-                case let .success(value):
-                    pendingRequest.resume(returning: value)
-                case let .failure(error):
-                    pendingRequest.resume(throwing: error)
-            }
-        } else if let pendingContextRequest = pendingContextRequests.removeValue(forKey: response.id) {
-            // Handle context requests that return raw Data
-            switch response.result {
-                case let .success(value):
-                    pendingContextRequest.resume(returning: value)
-                case let .failure(error):
-                    pendingContextRequest.resume(throwing: error)
-            }
-        } else {
-            await logger?.warning(
-                "Received response for unknown request",
-                metadata: ["id": "\(response.id)"]
-            )
-        }
-    }
+    // Response handling is delegated to the protocol conformance, which handles response
+    // routers and pending request matching internally.
 }

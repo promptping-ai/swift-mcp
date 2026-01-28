@@ -361,19 +361,19 @@ struct PromptParseMethodTests {
 @Suite("Prompt DSL - Render Execution")
 struct RenderExecutionTests {
     func createMockContext() -> HandlerContext {
-        let handlerContext = Server.RequestHandlerContext(
-            sendNotification: { _ in },
-            sendMessage: { _ in },
-            sendData: { _ in },
+        let handlerContext = RequestHandlerContext(
             sessionId: "test-session",
             requestId: .number(1),
             _meta: nil,
+            taskId: nil,
             authInfo: nil,
             requestInfo: nil,
-            closeSSEStream: nil,
-            closeStandaloneSSEStream: nil,
-            shouldSendLogMessage: { _ in true },
-            sendRequest: { _ in throw MCPError.internalError("Not implemented") }
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
+            sendNotification: { _ in },
+            sendRequest: { _ in throw MCPError.internalError("Not implemented") },
+            sendData: { _ in },
+            shouldSendLogMessage: { _ in true }
         )
         return HandlerContext(handlerContext: handlerContext)
     }
@@ -523,19 +523,19 @@ struct PromptOutputProtocolTests {
 @Suite("Prompt DSL - PromptRegistry")
 struct PromptRegistryTests {
     func createMockContext() -> HandlerContext {
-        let handlerContext = Server.RequestHandlerContext(
-            sendNotification: { _ in },
-            sendMessage: { _ in },
-            sendData: { _ in },
+        let handlerContext = RequestHandlerContext(
             sessionId: "test-session",
             requestId: .number(1),
             _meta: nil,
+            taskId: nil,
             authInfo: nil,
             requestInfo: nil,
-            closeSSEStream: nil,
-            closeStandaloneSSEStream: nil,
-            shouldSendLogMessage: { _ in true },
-            sendRequest: { _ in throw MCPError.internalError("Not implemented") }
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
+            sendNotification: { _ in },
+            sendRequest: { _ in throw MCPError.internalError("Not implemented") },
+            sendData: { _ in },
+            shouldSendLogMessage: { _ in true }
         )
         return HandlerContext(handlerContext: handlerContext)
     }
@@ -676,19 +676,19 @@ struct PromptRegistryTests {
 @Suite("Prompt DSL - Lifecycle Management")
 struct PromptLifecycleTests {
     func createMockContext() -> HandlerContext {
-        let handlerContext = Server.RequestHandlerContext(
-            sendNotification: { _ in },
-            sendMessage: { _ in },
-            sendData: { _ in },
+        let handlerContext = RequestHandlerContext(
             sessionId: "test-session",
             requestId: .number(1),
             _meta: nil,
+            taskId: nil,
             authInfo: nil,
             requestInfo: nil,
-            closeSSEStream: nil,
-            closeStandaloneSSEStream: nil,
-            shouldSendLogMessage: { _ in true },
-            sendRequest: { _ in throw MCPError.internalError("Not implemented") }
+            closeResponseStream: nil,
+            closeNotificationStream: nil,
+            sendNotification: { _ in },
+            sendRequest: { _ in throw MCPError.internalError("Not implemented") },
+            sendData: { _ in },
+            shouldSendLogMessage: { _ in true }
         )
         return HandlerContext(handlerContext: handlerContext)
     }

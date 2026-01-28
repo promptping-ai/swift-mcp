@@ -228,7 +228,7 @@ struct ResumabilityTests {
         }
 
         // Close the first stream (simulating disconnect)
-        await transport.closeStandaloneSSEStream()
+        await transport.closeNotificationStream()
 
         // Send second notification while "disconnected"
         let notification2 = """
@@ -309,7 +309,7 @@ struct ResumabilityTests {
         }
 
         // Close the SSE stream (simulate disconnect)
-        await transport.closeStandaloneSSEStream()
+        await transport.closeNotificationStream()
 
         // Send MULTIPLE notifications while the client is disconnected
         for i in 1 ... 3 {
@@ -569,7 +569,7 @@ struct ResumabilityTests {
         }
 
         // Close the stream
-        await transport.closeStandaloneSSEStream()
+        await transport.closeNotificationStream()
 
         // Send another notification while disconnected
         let notification2 = """
