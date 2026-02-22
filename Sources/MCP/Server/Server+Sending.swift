@@ -15,8 +15,12 @@ public extension Server {
         try await connection.send(responseData)
     }
 
-    /// Send a notification to connected clients
-    func notify(_ notification: Message<some Notification>) async throws {
+    /// Send a notification to connected clients.
+    ///
+    /// Accepts a `NotificationMessage` enum instead of `Message<some Notification>` or
+    /// `any NotificationMessageProtocol` to avoid a Swift 6.3 compiler crash (assertion
+    /// failure in TypeLowering.cpp) when opaque type parameters are captured in closures.
+    func notify(_ notification: NotificationMessage) async throws {
         guard let connection else {
             throw MCPError.internalError("Server connection not initialized")
         }
@@ -53,11 +57,11 @@ public extension Server {
         // Check if this message should be sent based on the session's log level
         guard shouldSendLogMessage(at: level, forSession: sessionId) else { return }
 
-        try await notify(LogMessageNotification.message(.init(
+        try await notify(.logMessage(Message(method: LogMessageNotification.name, params: LogMessageNotification.Parameters(
             level: level,
             logger: logger,
             data: data
-        )))
+        ))))
     }
 
     // MARK: - List Changed Notifications
@@ -71,7 +75,7 @@ public extension Server {
         guard capabilities.resources != nil else {
             throw MCPError.internalError("Server does not support resources capability (required for notifications/resources/list_changed)")
         }
-        try await notify(ResourceListChangedNotification.message())
+        try await notify(.resourceListChanged(Message(method: ResourceListChangedNotification.name, params: NotificationParams())))
     }
 
     /// Send a resource updated notification to connected clients.
@@ -84,7 +88,7 @@ public extension Server {
         guard capabilities.resources != nil else {
             throw MCPError.internalError("Server does not support resources capability (required for notifications/resources/updated)")
         }
-        try await notify(ResourceUpdatedNotification.message(.init(uri: uri)))
+        try await notify(.resourceUpdated(Message(method: ResourceUpdatedNotification.name, params: ResourceUpdatedNotification.Parameters(uri: uri))))
     }
 
     /// Send a tool list changed notification to connected clients.
@@ -96,7 +100,7 @@ public extension Server {
         guard capabilities.tools != nil else {
             throw MCPError.internalError("Server does not support tools capability (required for notifications/tools/list_changed)")
         }
-        try await notify(ToolListChangedNotification.message())
+        try await notify(.toolListChanged(Message(method: ToolListChangedNotification.name, params: NotificationParams())))
     }
 
     /// Send a prompt list changed notification to connected clients.
@@ -108,6 +112,6 @@ public extension Server {
         guard capabilities.prompts != nil else {
             throw MCPError.internalError("Server does not support prompts capability (required for notifications/prompts/list_changed)")
         }
-        try await notify(PromptListChangedNotification.message())
+        try await notify(.promptListChanged(Message(method: PromptListChangedNotification.name, params: NotificationParams())))
     }
 }

@@ -455,12 +455,12 @@ struct IntegrationRoundtripTests {
                 let message = "Step \(step)/\(steps): Processing..."
 
                 // Send progress notification using sendMessage
-                try await context.sendNotification(ProgressNotification.message(.init(
+                try await context.sendNotification(.progress(ProgressNotification.message(.init(
                     progressToken: .string("progress-token"),
                     progress: progress,
                     total: 1.0,
                     message: message
-                )))
+                ))))
 
                 // Simulate work
                 try? await Task.sleep(for: .milliseconds(10))
@@ -822,26 +822,26 @@ struct IntegrationRoundtripTests {
             let data = request.arguments?["data"]?.stringValue ?? ""
 
             // Send log messages at different levels using sendMessage
-            try await context.sendNotification(LogMessageNotification.message(.init(
+            try await context.sendNotification(.logMessage(LogMessageNotification.message(.init(
                 level: .debug,
                 logger: "process",
                 data: .string("Starting to process data")
-            )))
-            try await context.sendNotification(LogMessageNotification.message(.init(
+            ))))
+            try await context.sendNotification(.logMessage(LogMessageNotification.message(.init(
                 level: .info,
                 logger: "process",
                 data: .string("Processing: \(data)")
-            )))
-            try await context.sendNotification(LogMessageNotification.message(.init(
+            ))))
+            try await context.sendNotification(.logMessage(LogMessageNotification.message(.init(
                 level: .warning,
                 logger: "process",
                 data: .string("Data contains special characters")
-            )))
-            try await context.sendNotification(LogMessageNotification.message(.init(
+            ))))
+            try await context.sendNotification(.logMessage(LogMessageNotification.message(.init(
                 level: .error,
                 logger: "process",
                 data: .string("Simulated error for testing")
-            )))
+            ))))
 
             return CallTool.Result(content: [.text("Processed: \(data)")])
         }
@@ -922,7 +922,7 @@ struct IntegrationRoundtripTests {
 
         await server.withRequestHandler(CallTool.self) { _, context in
             // Notify that resource list has changed
-            try await context.sendNotification(ResourceListChangedNotification())
+            try await context.sendNotification(.resourceListChanged(ResourceListChangedNotification.message()))
 
             return CallTool.Result(content: [.text("Resource created")])
         }

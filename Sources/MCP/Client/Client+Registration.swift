@@ -77,8 +77,12 @@ public extension Client {
         registeredHandlers.fallbackNotificationHandler = AnyNotificationHandler(handler)
     }
 
-    /// Send a notification to the server
-    func notify(_ notification: Message<some Notification>) async throws {
+    /// Send a notification to the server.
+    ///
+    /// Accepts a `NotificationMessage` enum instead of `Message<some Notification>`
+    /// to avoid a Swift 6.3 compiler crash (assertion failure in TypeLowering.cpp) when
+    /// opaque type parameters are captured in closures.
+    func notify(_ notification: NotificationMessage) async throws {
         guard isProtocolConnected else {
             throw MCPError.internalError("Client connection not initialized")
         }
@@ -115,11 +119,14 @@ public extension Client {
         total: Double? = nil,
         message: String? = nil
     ) async throws {
-        try await notify(ProgressNotification.message(.init(
-            progressToken: token,
-            progress: progress,
-            total: total,
-            message: message
+        try await notify(.progress(Message(
+            method: ProgressNotification.name,
+            params: ProgressNotification.Parameters(
+                progressToken: token,
+                progress: progress,
+                total: total,
+                message: message
+            )
         )))
     }
 
@@ -135,7 +142,7 @@ public extension Client {
             throw MCPError.invalidRequest(
                 "Client does not support roots.listChanged capability")
         }
-        try await notify(RootsListChangedNotification.message(.init()))
+        try await notify(.rootsListChanged(Message(method: RootsListChangedNotification.name, params: RootsListChangedNotification.Parameters())))
     }
 
     /// Register a handler for server→client requests.

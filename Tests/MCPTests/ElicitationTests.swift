@@ -2124,9 +2124,9 @@ struct ElicitationCompleteNotificationIntegrationTests {
             let elicitationId = "complete-test-123"
 
             // Send the completion notification
-            try await context.sendNotification(ElicitationCompleteNotification.message(.init(
+            try await context.sendNotification(.elicitationComplete(ElicitationCompleteNotification.message(.init(
                 elicitationId: elicitationId
-            )))
+            ))))
 
             return CallTool.Result(content: [.text("Elicitation completed")])
         }
@@ -2193,9 +2193,9 @@ struct ElicitationCompleteNotificationIntegrationTests {
 
             // After client responds, send completion notification
             if result.action == .accept {
-                try await context.sendNotification(ElicitationCompleteNotification.message(.init(
+                try await context.sendNotification(.elicitationComplete(ElicitationCompleteNotification.message(.init(
                     elicitationId: elicitationId
-                )))
+                ))))
             }
 
             return CallTool.Result(content: [.text("Authorization complete")])

@@ -712,23 +712,25 @@ public actor Client: ProtocolLayer {
 
     /// Internal initialization implementation
     func _initialize() async throws -> Initialize.Result {
-        let request = Initialize.request(
-            .init(
-                protocolVersion: Version.latest,
-                capabilities: capabilities,
-                clientInfo: clientInfo
-            ))
+        let params = Initialize.Parameters(
+            protocolVersion: Version.latest,
+            capabilities: capabilities,
+            clientInfo: clientInfo
+        )
+        let request: Request<Initialize> = Initialize.request(params)
 
-        let result = try await send(request)
+        let result: Initialize.Result = try await send(request)
 
         // Per MCP spec: "If the client does not support the version in the
         // server's response, it SHOULD disconnect."
-        guard Version.supported.contains(result.protocolVersion) else {
+        let isSupported: Bool = Version.supported.contains(result.protocolVersion)
+        guard isSupported else {
             await disconnect()
-            throw MCPError.invalidRequest(
+            let supportedVersions: String = Version.supported.sorted().joined(separator: ", ")
+            let message: String =
                 "Server responded with unsupported protocol version: \(result.protocolVersion). "
-                    + "Supported versions: \(Version.supported.sorted().joined(separator: ", "))"
-            )
+                + "Supported versions: \(supportedVersions)"
+            throw MCPError.invalidRequest(message)
         }
 
         serverCapabilities = result.capabilities
@@ -739,9 +741,10 @@ public actor Client: ProtocolLayer {
         // Set the negotiated protocol version on the transport.
         // HTTP transports use this to include the version in request headers.
         // Simple transports (stdio, in-memory) use the default no-op implementation.
-        await protocolState.transport?.setProtocolVersion(result.protocolVersion)
+        let negotiatedVersion: String = result.protocolVersion
+        await protocolState.transport?.setProtocolVersion(negotiatedVersion)
 
-        try await notify(InitializedNotification.message())
+        try await notify(.initialized(Message(method: InitializedNotification.name, params: NotificationParams())))
 
         return result
     }

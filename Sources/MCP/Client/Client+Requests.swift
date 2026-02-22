@@ -313,9 +313,9 @@ public extension Client {
             return
         }
 
-        let notification = CancelledNotification.message(.init(
-            requestId: requestId,
-            reason: reason
+        let notification: NotificationMessage = .cancelled(Message(
+            method: CancelledNotification.name,
+            params: CancelledNotification.Parameters(requestId: requestId, reason: reason)
         ))
 
         do {

@@ -22,7 +22,7 @@ import Logging
 ///     try context.checkCancellation()
 ///
 ///     // Send progress notification
-///     try await context.sendNotification(ProgressNotification.message(...))
+///     try await context.sendNotification(.progress(ProgressNotification.message(...)))
 ///
 ///     return CallTool.Result(content: [.text("Done")])
 /// }
@@ -63,7 +63,7 @@ public struct RequestHandlerContext: Sendable {
     ///
     /// The notification will be associated with this request via `relatedRequestId`
     /// for proper routing in multiplexed transports.
-    private let _sendNotification: @Sendable (any NotificationMessageProtocol) async throws -> Void
+    private let _sendNotification: @Sendable (NotificationMessage) async throws -> Void
 
     /// Send a request to the peer and wait for a response.
     ///
@@ -95,21 +95,8 @@ public struct RequestHandlerContext: Sendable {
     }
 
     /// Send a notification message to the peer.
-    public func sendNotification(_ notification: some NotificationMessageProtocol) async throws {
+    public func sendNotification(_ notification: NotificationMessage) async throws {
         try await _sendNotification(notification)
-    }
-
-    /// Send a parameterless notification to the peer.
-    ///
-    /// For notifications with `Empty` or `NotificationParams` parameters,
-    /// this creates the message automatically.
-    public func sendNotification<N: Notification>(_: N) async throws where N.Parameters == Empty {
-        try await _sendNotification(N.message())
-    }
-
-    /// Send a parameterless notification to the peer (NotificationParams variant).
-    public func sendNotification<N: Notification>(_: N) async throws where N.Parameters == NotificationParams {
-        try await _sendNotification(N.message())
     }
 
     /// Send a request to the peer and wait for a response.
@@ -136,13 +123,14 @@ public struct RequestHandlerContext: Sendable {
         message: String? = nil
     ) async throws {
         try await _sendNotification(
-            ProgressNotification.message(
-                .init(
+            .progress(Message(
+                method: ProgressNotification.name,
+                params: ProgressNotification.Parameters(
                     progressToken: token,
                     progress: progress,
                     total: total,
                     message: message
-                )))
+                ))))
     }
 
     /// Send raw data to the peer.
@@ -179,8 +167,9 @@ public struct RequestHandlerContext: Sendable {
     ) async throws {
         guard await shouldSendLogMessage(at: level) else { return }
         try await _sendNotification(
-            LogMessageNotification.message(
-                .init(level: level, logger: logger, data: data)))
+            .logMessage(Message(
+                method: LogMessageNotification.name,
+                params: LogMessageNotification.Parameters(level: level, logger: logger, data: data))))
     }
 
     /// Send a resource list changed notification to the client.
@@ -190,7 +179,7 @@ public struct RequestHandlerContext: Sendable {
         guard serverCapabilities?.resources != nil else {
             throw MCPError.internalError("Server does not support resources capability (required for notifications/resources/list_changed)")
         }
-        try await _sendNotification(ResourceListChangedNotification.message())
+        try await _sendNotification(.resourceListChanged(Message(method: ResourceListChangedNotification.name, params: NotificationParams())))
     }
 
     /// Send a resource updated notification to the client.
@@ -201,7 +190,7 @@ public struct RequestHandlerContext: Sendable {
         guard serverCapabilities?.resources != nil else {
             throw MCPError.internalError("Server does not support resources capability (required for notifications/resources/updated)")
         }
-        try await _sendNotification(ResourceUpdatedNotification.message(.init(uri: uri)))
+        try await _sendNotification(.resourceUpdated(Message(method: ResourceUpdatedNotification.name, params: ResourceUpdatedNotification.Parameters(uri: uri))))
     }
 
     /// Send a tool list changed notification to the client.
@@ -211,7 +200,7 @@ public struct RequestHandlerContext: Sendable {
         guard serverCapabilities?.tools != nil else {
             throw MCPError.internalError("Server does not support tools capability (required for notifications/tools/list_changed)")
         }
-        try await _sendNotification(ToolListChangedNotification.message())
+        try await _sendNotification(.toolListChanged(Message(method: ToolListChangedNotification.name, params: NotificationParams())))
     }
 
     /// Send a prompt list changed notification to the client.
@@ -221,7 +210,7 @@ public struct RequestHandlerContext: Sendable {
         guard serverCapabilities?.prompts != nil else {
             throw MCPError.internalError("Server does not support prompts capability (required for notifications/prompts/list_changed)")
         }
-        try await _sendNotification(PromptListChangedNotification.message())
+        try await _sendNotification(.promptListChanged(Message(method: PromptListChangedNotification.name, params: NotificationParams())))
     }
 
     /// Send a cancellation notification to the peer.
@@ -231,8 +220,9 @@ public struct RequestHandlerContext: Sendable {
     ///   - reason: An optional reason for the cancellation
     public func sendCancelled(requestId: RequestId? = nil, reason: String? = nil) async throws {
         try await _sendNotification(
-            CancelledNotification.message(
-                .init(requestId: requestId, reason: reason)))
+            .cancelled(Message(
+                method: CancelledNotification.name,
+                params: CancelledNotification.Parameters(requestId: requestId, reason: reason))))
     }
 
     /// Send an elicitation complete notification to the client.
@@ -240,15 +230,16 @@ public struct RequestHandlerContext: Sendable {
     /// - Parameter elicitationId: The ID of the elicitation that completed.
     public func sendElicitationComplete(elicitationId: String) async throws {
         try await _sendNotification(
-            ElicitationCompleteNotification.message(
-                .init(elicitationId: elicitationId)))
+            .elicitationComplete(Message(
+                method: ElicitationCompleteNotification.name,
+                params: ElicitationCompleteNotification.Parameters(elicitationId: elicitationId))))
     }
 
     /// Send a task status notification to the client.
     ///
     /// - Parameter task: The task to send the status notification for.
     public func sendTaskStatus(task: MCPTask) async throws {
-        try await _sendNotification(TaskStatusNotification.message(.init(task: task)))
+        try await _sendNotification(.taskStatus(Message(method: TaskStatusNotification.name, params: TaskStatusNotification.Parameters(task: task))))
     }
 
     /// Request user input via form elicitation from the client.
@@ -310,7 +301,7 @@ public struct RequestHandlerContext: Sendable {
         requestInfo: RequestInfo?,
         closeResponseStream: (@Sendable () async -> Void)?,
         closeNotificationStream: (@Sendable () async -> Void)?,
-        sendNotification: @escaping @Sendable (any NotificationMessageProtocol) async throws -> Void,
+        sendNotification: @escaping @Sendable (NotificationMessage) async throws -> Void,
         sendRequest: @escaping @Sendable (Data) async throws -> Data,
         sendData: (@Sendable (Data) async throws -> Void)? = nil,
         shouldSendLogMessage: (@Sendable (LoggingLevel) async -> Bool)? = nil,

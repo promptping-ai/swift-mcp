@@ -856,12 +856,12 @@ struct ProgressTests {
                 }
 
                 // Use sendMessage directly instead of convenience method
-                try await context.sendNotification(ProgressNotification.message(.init(
+                try await context.sendNotification(.progress(ProgressNotification.message(.init(
                     progressToken: .string("via-sendMessage"),
                     progress: 42.0,
                     total: 100.0,
                     message: "Sent via sendMessage"
-                )))
+                ))))
 
                 return CallTool.Result(content: [.text("Done")])
             }
@@ -1756,26 +1756,26 @@ struct ProgressTests {
             try await client.connect(transport: clientTransport)
 
             // Client sends progress notifications to server (like Python test)
-            try await client.notify(ProgressNotification.message(.init(
+            try await client.notify(.progress(ProgressNotification.message(.init(
                 progressToken: clientProgressToken,
                 progress: 0.33,
                 total: 1.0,
                 message: "Client progress 33%"
-            )))
+            ))))
 
-            try await client.notify(ProgressNotification.message(.init(
+            try await client.notify(.progress(ProgressNotification.message(.init(
                 progressToken: clientProgressToken,
                 progress: 0.66,
                 total: 1.0,
                 message: "Client progress 66%"
-            )))
+            ))))
 
-            try await client.notify(ProgressNotification.message(.init(
+            try await client.notify(.progress(ProgressNotification.message(.init(
                 progressToken: clientProgressToken,
                 progress: 1.0,
                 total: 1.0,
                 message: "Client progress 100%"
-            )))
+            ))))
 
             // Give time for notifications to be processed
             try await Task.sleep(for: .milliseconds(100))
@@ -1888,19 +1888,19 @@ struct ProgressTests {
             try await client.connect(transport: clientTransport)
 
             // Client sends progress notifications to server
-            try await client.notify(ProgressNotification.message(.init(
+            try await client.notify(.progress(ProgressNotification.message(.init(
                 progressToken: clientProgressToken,
                 progress: 0.25,
                 total: 1.0,
                 message: "Client progress 25%"
-            )))
+            ))))
 
-            try await client.notify(ProgressNotification.message(.init(
+            try await client.notify(.progress(ProgressNotification.message(.init(
                 progressToken: clientProgressToken,
                 progress: 0.75,
                 total: 1.0,
                 message: "Client progress 75%"
-            )))
+            ))))
 
             // Call tool to trigger server→client progress
             _ = try await client.callTool(name: "progress_tool", arguments: [:])
@@ -2082,12 +2082,12 @@ struct ProgressTests {
             try await client.connect(transport: clientTransport)
 
             // Client sends progress with token 0 (edge case)
-            try await client.notify(ProgressNotification.message(.init(
+            try await client.notify(.progress(ProgressNotification.message(.init(
                 progressToken: .integer(0),
                 progress: 50.0,
                 total: 100.0,
                 message: "Progress with zero token"
-            )))
+            ))))
 
             try await Task.sleep(for: .milliseconds(100))
 
