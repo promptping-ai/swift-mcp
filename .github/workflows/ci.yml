@@ -15,9 +15,9 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [self-hosted]
 
-    runs-on: ${{ matrix.os }}
+    runs-on: self-hosted
     name: Test (${{ matrix.os }})
 
     steps:
@@ -39,7 +39,7 @@ jobs:
 
   docs:
     name: Documentation
-    runs-on: macos-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
 
   conformance:
     name: Conformance Tests
-    runs-on: macos-latest
+    runs-on: self-hosted
     timeout-minutes: 15
     needs: test
     steps:
@@ -68,7 +68,7 @@ jobs:
 
   static-linux-sdk-build:
     name: Linux Static SDK Build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     container: swift:6.2-noble
     timeout-minutes: 30
     steps:
