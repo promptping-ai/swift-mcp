@@ -77,7 +77,7 @@ struct NotificationHandlerDispatchTests {
         }
 
         // Send the notification from the server to trigger the handler
-        try await pair.server.notify(ToolListChangedNotification.message())
+        try await pair.server.notify(.toolListChanged(Message(method: ToolListChangedNotification.name, params: NotificationParams())))
 
         // Poll until the handler completes or timeout triggers
         var tools: [Tool]?
@@ -121,7 +121,7 @@ struct NotificationHandlerDispatchTests {
         }
 
         // Trigger the notification
-        try await pair.server.notify(ToolListChangedNotification.message())
+        try await pair.server.notify(.toolListChanged(Message(method: ToolListChangedNotification.name, params: NotificationParams())))
 
         // Wait for both handlers to execute
         let bothCalled = await pollUntil {
@@ -165,7 +165,7 @@ struct NotificationHandlerDispatchTests {
         }
 
         // Trigger the notification
-        try await pair.server.notify(ToolListChangedNotification.message())
+        try await pair.server.notify(.toolListChanged(Message(method: ToolListChangedNotification.name, params: NotificationParams())))
 
         // Wait for the second handler to execute (despite the first one throwing)
         let secondCalled = await pollUntil { await tracker.wasCalled() }
@@ -189,7 +189,7 @@ struct NotificationHandlerDispatchTests {
 
         // Trigger the notification multiple times
         for _ in 0 ..< 3 {
-            try await pair.server.notify(ToolListChangedNotification.message())
+            try await pair.server.notify(.toolListChanged(Message(method: ToolListChangedNotification.name, params: NotificationParams())))
         }
 
         // Allow time for notifications to be processed

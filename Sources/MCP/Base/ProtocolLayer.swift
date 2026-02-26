@@ -609,7 +609,7 @@ package extension ProtocolLayer {
 
     /// Send a notification with optional debouncing.
     func sendProtocolNotification(
-        _ notification: some NotificationMessageProtocol,
+        _ notification: NotificationMessage,
         relatedRequestId: RequestId? = nil
     ) async throws {
         let method = notification.method

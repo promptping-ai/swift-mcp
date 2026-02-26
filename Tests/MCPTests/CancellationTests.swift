@@ -318,7 +318,7 @@ struct CancellationTests {
                 requestId: .string("req-to-cancel"),
                 reason: "User requested cancellation"
             )
-            try await client.notify(CancelledNotification.message(cancelParams))
+            try await client.notify(.cancelled(CancelledNotification.message(cancelParams)))
 
             // Give time for notification to be processed
             try await Task.sleep(for: .milliseconds(100))
@@ -410,7 +410,7 @@ struct CancellationTests {
                 requestId: .string("some-cancelled-request"),
                 reason: "Testing server recovery"
             )
-            try await client.notify(CancelledNotification.message(cancelParams))
+            try await client.notify(.cancelled(CancelledNotification.message(cancelParams)))
 
             // Give time for notification to be processed
             try await Task.sleep(for: .milliseconds(50))
@@ -478,10 +478,10 @@ struct CancellationTests {
 
                 // Server sends a cancellation notification for some other request
                 // This simulates the server cancelling a client's pending request
-                try await context.sendNotification(CancelledNotification.message(.init(
+                try await context.sendNotification(.cancelled(CancelledNotification.message(.init(
                     requestId: .string("client-pending-request"),
                     reason: "Server is cancelling this request"
-                )))
+                ))))
 
                 return CallTool.Result(content: [.text("Cancel notification sent")])
             }
@@ -567,7 +567,7 @@ struct CancellationTests {
                     requestId: .string("req-\(i)"),
                     reason: "Cancellation \(i)"
                 )
-                try await client.notify(CancelledNotification.message(cancelParams))
+                try await client.notify(.cancelled(CancelledNotification.message(cancelParams)))
             }
 
             // Give time for all notifications to be processed
@@ -637,7 +637,7 @@ struct CancellationTests {
             let cancelParams = CancelledNotification.Parameters(
                 reason: "General operation cancellation"
             )
-            try await client.notify(CancelledNotification.message(cancelParams))
+            try await client.notify(.cancelled(CancelledNotification.message(cancelParams)))
 
             // Give time for notification to be processed
             try await Task.sleep(for: .milliseconds(100))
@@ -701,10 +701,10 @@ struct CancellationTests {
                 }
 
                 // Use the context's sendMessage to send a CancelledNotification
-                try await context.sendNotification(CancelledNotification.message(.init(
+                try await context.sendNotification(.cancelled(CancelledNotification.message(.init(
                     requestId: .string("ctx-cancel-request"),
                     reason: "Cancelled via server context"
-                )))
+                ))))
 
                 return CallTool.Result(content: [.text("Cancellation sent via context")])
             }
@@ -1120,10 +1120,10 @@ struct CancellationTests {
             try await handlerStarted.waitForStart()
 
             // Send cancellation notification from client to server with the known request ID
-            try await client.notify(CancelledNotification.message(.init(
+            try await client.notify(.cancelled(CancelledNotification.message(.init(
                 requestId: knownRequestId,
                 reason: "Test cancellation"
-            )))
+            ))))
 
             // Give time for cancellation to propagate
             try await Task.sleep(for: .milliseconds(100))
@@ -1216,10 +1216,10 @@ struct CancellationTests {
             try await handlerStarted.waitForStart()
 
             // Send cancellation immediately
-            try await client.notify(CancelledNotification.message(.init(
+            try await client.notify(.cancelled(CancelledNotification.message(.init(
                 requestId: knownRequestId,
                 reason: "Suppress response test"
-            )))
+            ))))
 
             // Cancel the client task as well since no response will come
             try await Task.sleep(for: .milliseconds(100))

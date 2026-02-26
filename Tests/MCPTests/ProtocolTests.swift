@@ -387,7 +387,7 @@ struct DebouncedNotificationTests {
         try await clientTransport.connect()
 
         // Send multiple notifications synchronously (without awaiting between)
-        let notification = ResourceListChangedNotification.message()
+        let notification: NotificationMessage = .resourceListChanged(Message(method: ResourceListChangedNotification.name, params: NotificationParams()))
         try await proto.sendProtocolNotification(notification)
         try await proto.sendProtocolNotification(notification)
         try await proto.sendProtocolNotification(notification)
@@ -415,7 +415,7 @@ struct DebouncedNotificationTests {
         try await clientTransport.connect()
 
         // Send notifications with relatedRequestId - should NOT be debounced
-        let notification = ResourceListChangedNotification.message()
+        let notification: NotificationMessage = .resourceListChanged(Message(method: ResourceListChangedNotification.name, params: NotificationParams()))
         try await proto.sendProtocolNotification(notification, relatedRequestId: .number(1))
         try await proto.sendProtocolNotification(notification, relatedRequestId: .number(2))
 
@@ -440,7 +440,7 @@ struct DebouncedNotificationTests {
         try await clientTransport.connect()
 
         // Send a notification (will be pending in debounce queue)
-        let notification = ResourceListChangedNotification.message()
+        let notification: NotificationMessage = .resourceListChanged(Message(method: ResourceListChangedNotification.name, params: NotificationParams()))
         try await proto.sendProtocolNotification(notification)
 
         // Immediately disconnect before debounce flushes
@@ -467,7 +467,7 @@ struct DebouncedNotificationTests {
         try await clientTransport.connect()
 
         // Send multiple notifications (non-debounced, so sent immediately)
-        let notification = ResourceListChangedNotification.message()
+        let notification: NotificationMessage = .resourceListChanged(Message(method: ResourceListChangedNotification.name, params: NotificationParams()))
         try await proto.sendProtocolNotification(notification)
         try await proto.sendProtocolNotification(notification)
         try await proto.sendProtocolNotification(notification)

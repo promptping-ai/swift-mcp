@@ -565,7 +565,7 @@ struct ClientTests {
         initTask.cancel()
 
         // Create a test notification
-        let notification = InitializedNotification.message()
+        let notification: NotificationMessage = .initialized(InitializedNotification.message())
         try await client.notify(notification)
 
         // Verify notification was sent (in addition to initialize and initialized notification)

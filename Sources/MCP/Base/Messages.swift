@@ -347,9 +347,77 @@ public struct AnyNotification: Notification, Sendable {
 ///
 /// This protocol allows sending notification messages with parameters through
 /// a type-erased interface. `Message<N>` conforms to this protocol.
+///
+/// - Note: Prefer using `NotificationMessage` enum over `any NotificationMessageProtocol`
+///   to avoid Swift 6.3 compiler crashes in TypeLowering.cpp.
 public protocol NotificationMessageProtocol: Sendable, Encodable {
     /// The notification method name.
     var method: String { get }
+}
+
+/// Concrete enum for all MCP notification messages.
+///
+/// Replaces `any NotificationMessageProtocol` and `Message<some Notification>` across the
+/// codebase to avoid a Swift 6.3 compiler crash (assertion failure in TypeLowering.cpp)
+/// when opaque/existential notification types are captured in closures.
+///
+/// Each case wraps a concrete `Message<X>` for a specific notification type. The enum
+/// provides `Encodable` conformance by delegating to the wrapped message, and exposes
+/// the `method` name for debouncing and routing.
+public enum NotificationMessage: Sendable, Encodable {
+    // Lifecycle
+    case initialized(Message<InitializedNotification>)
+    case cancelled(Message<CancelledNotification>)
+
+    // Progress
+    case progress(Message<ProgressNotification>)
+
+    // Client → Server
+    case rootsListChanged(Message<RootsListChangedNotification>)
+
+    // Server → Client
+    case logMessage(Message<LogMessageNotification>)
+    case resourceListChanged(Message<ResourceListChangedNotification>)
+    case resourceUpdated(Message<ResourceUpdatedNotification>)
+    case toolListChanged(Message<ToolListChangedNotification>)
+    case promptListChanged(Message<PromptListChangedNotification>)
+
+    // Experimental
+    case taskStatus(Message<TaskStatusNotification>)
+    case elicitationComplete(Message<ElicitationCompleteNotification>)
+
+    /// The notification method name.
+    public var method: String {
+        switch self {
+        case .initialized(let m): m.method
+        case .cancelled(let m): m.method
+        case .progress(let m): m.method
+        case .rootsListChanged(let m): m.method
+        case .logMessage(let m): m.method
+        case .resourceListChanged(let m): m.method
+        case .resourceUpdated(let m): m.method
+        case .toolListChanged(let m): m.method
+        case .promptListChanged(let m): m.method
+        case .taskStatus(let m): m.method
+        case .elicitationComplete(let m): m.method
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .initialized(let m): try m.encode(to: encoder)
+        case .cancelled(let m): try m.encode(to: encoder)
+        case .progress(let m): try m.encode(to: encoder)
+        case .rootsListChanged(let m): try m.encode(to: encoder)
+        case .logMessage(let m): try m.encode(to: encoder)
+        case .resourceListChanged(let m): try m.encode(to: encoder)
+        case .resourceUpdated(let m): try m.encode(to: encoder)
+        case .toolListChanged(let m): try m.encode(to: encoder)
+        case .promptListChanged(let m): try m.encode(to: encoder)
+        case .taskStatus(let m): try m.encode(to: encoder)
+        case .elicitationComplete(let m): try m.encode(to: encoder)
+        }
+    }
 }
 
 /// A message that can be used to send notifications.
@@ -432,24 +500,75 @@ public struct Message<N: Notification>: NotificationMessageProtocol, Hashable, C
 /// A type-erased message for message handling.
 public typealias AnyMessage = Message<AnyNotification>
 
-public extension Notification where Parameters == Empty {
-    /// Create a message with empty parameters.
-    static func message() -> Message<Self> {
-        Message(method: name, params: Empty())
+// MARK: - Concrete Notification Factory Methods
+//
+// Generic `Notification.message()` protocol extensions were removed because they trigger
+// a Swift 6.3-dev compiler crash (assertion failure in TypeLowering.cpp during SIL lowering).
+// Instead, each notification type has its own concrete factory method below.
+
+public extension InitializedNotification {
+    static func message(_ params: NotificationParams = NotificationParams()) -> Message<InitializedNotification> {
+        Message(method: name, params: params)
     }
 }
 
-public extension Notification where Parameters == NotificationParams {
-    /// Create a message with default parameters (no metadata).
-    static func message() -> Message<Self> {
-        Message(method: name, params: NotificationParams())
+public extension CancelledNotification {
+    static func message(_ params: Parameters) -> Message<CancelledNotification> {
+        Message(method: name, params: params)
     }
 }
 
-public extension Notification {
-    /// Create a message with the given parameters.
-    static func message(_ parameters: Parameters) -> Message<Self> {
-        Message(method: name, params: parameters)
+public extension ProgressNotification {
+    static func message(_ params: Parameters) -> Message<ProgressNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension RootsListChangedNotification {
+    static func message(_ params: NotificationParams = NotificationParams()) -> Message<RootsListChangedNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension ResourceListChangedNotification {
+    static func message(_ params: NotificationParams = NotificationParams()) -> Message<ResourceListChangedNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension ResourceUpdatedNotification {
+    static func message(_ params: Parameters) -> Message<ResourceUpdatedNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension PromptListChangedNotification {
+    static func message(_ params: NotificationParams = NotificationParams()) -> Message<PromptListChangedNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension ToolListChangedNotification {
+    static func message(_ params: NotificationParams = NotificationParams()) -> Message<ToolListChangedNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension LogMessageNotification {
+    static func message(_ params: Parameters) -> Message<LogMessageNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension ElicitationCompleteNotification {
+    static func message(_ params: Parameters) -> Message<ElicitationCompleteNotification> {
+        Message(method: name, params: params)
+    }
+}
+
+public extension TaskStatusNotification {
+    static func message(_ params: Parameters) -> Message<TaskStatusNotification> {
+        Message(method: name, params: params)
     }
 }
 

@@ -107,7 +107,7 @@ actor MockTransport: Transport {
         try queue(data: encoder.encode(response))
     }
 
-    func queue(notification: Message<some Notification>) throws {
+    func queue<N: Notification>(notification: Message<N>) throws {
         try queue(data: encoder.encode(notification))
     }
 

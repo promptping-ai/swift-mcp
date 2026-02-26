@@ -257,7 +257,7 @@ public final class ServerTaskContext: Sendable {
     private func sendStatusNotification() async {
         guard let server else { return }
         do {
-            try await server.notify(TaskStatusNotification.message(.init(task: task)))
+            try await server.notify(.taskStatus(Message(method: TaskStatusNotification.name, params: TaskStatusNotification.Parameters(task: task))))
         } catch {
             // Notification failures shouldn't break task execution
             // The client will still get status updates via polling

@@ -245,20 +245,20 @@ public actor MCPServer {
     }
 
     private func notifyToolListChanged() async {
-        await broadcastNotification(ToolListChangedNotification.message())
+        await broadcastNotification(.toolListChanged(Message(method: ToolListChangedNotification.name, params: NotificationParams())))
     }
 
     private func notifyResourceListChanged() async {
-        await broadcastNotification(ResourceListChangedNotification.message())
+        await broadcastNotification(.resourceListChanged(Message(method: ResourceListChangedNotification.name, params: NotificationParams())))
     }
 
     private func notifyPromptListChanged() async {
-        await broadcastNotification(PromptListChangedNotification.message())
+        await broadcastNotification(.promptListChanged(Message(method: PromptListChangedNotification.name, params: NotificationParams())))
     }
 
     /// Broadcasts a notification to all active sessions concurrently.
     /// Sessions that fail to receive the notification (e.g., disconnected) are automatically removed.
-    private func broadcastNotification(_ notification: Message<some Notification>) async {
+    private func broadcastNotification(_ notification: NotificationMessage) async {
         let currentSessions = sessions
 
         let failedIDs = await withTaskGroup(

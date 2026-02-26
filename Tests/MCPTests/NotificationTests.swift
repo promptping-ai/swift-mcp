@@ -25,7 +25,7 @@ struct NotificationTests {
     @Test("Notification initialization with parameters")
     func testNotificationWithParameters() throws {
         let params = TestNotification.Parameters(event: "test-event")
-        let notification = TestNotification.message(params)
+        let notification: Message<TestNotification> = Message(method: TestNotification.name, params: params)
 
         #expect(notification.method == TestNotification.name)
         #expect(notification.params.event == "test-event")
@@ -46,7 +46,7 @@ struct NotificationTests {
             static let name = "empty.notification"
         }
 
-        let notification = EmptyNotification.message()
+        let notification: Message<EmptyNotification> = Message(method: EmptyNotification.name, params: Empty())
 
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
@@ -59,7 +59,7 @@ struct NotificationTests {
 
     @Test("Initialized notification encoding")
     func testInitializedNotificationEncoding() throws {
-        let notification = InitializedNotification.message()
+        let notification: Message<InitializedNotification> = Message(method: InitializedNotification.name, params: Empty())
 
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()

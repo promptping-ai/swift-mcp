@@ -384,7 +384,7 @@ struct TransportSwitchingTests {
         await server.withRequestHandler(Ping.self) { [tracker] _, context in
             // Send a notification mid-execution using the context
             // The notification should include the relatedRequestId
-            try await context.sendNotification(ToolListChangedNotification())
+            try await context.sendNotification(.toolListChanged(ToolListChangedNotification.message()))
             await tracker.markSent()
             return Empty()
         }
